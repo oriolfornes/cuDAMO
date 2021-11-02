@@ -152,7 +152,7 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
         if np.array_equal(pwm_0, pwm):
             break
 
-    print(f"AUC optimized from {original_auc} to {auc}.")
+    print("\n" + f"AUC optimized from {original_auc} to {auc}." + "\n")
 
     # Save PWM
     return(pwm)
