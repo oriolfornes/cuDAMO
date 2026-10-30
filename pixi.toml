@@ -1,6 +1,6 @@
 [workspace]
 name = "cudamo"
-version = "1.0.0"
+version = "1.1.0"
 description = "A PyTorch implementation of DAMO that runs on CUDA GPUs when available"
 channels = ["pytorch", "conda-forge"]
 platforms = ["linux-64", "osx-arm64"]
