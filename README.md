@@ -15,3 +15,19 @@ cuDAMO has the following Python dependencies.
 | [Python](https://www.python.org/) | 3.9.6 |
 | [PyTorch](https://pytorch.org/) | 1.9.0 |
 | [tqdm](https://github.com/tqdm/tqdm) | 4.62.1 |
+
+Fidelity to DAMO
+-----
+Checked against `DAMO.py` (level 1). Fixed:
+
+- **Pseudocounts.** DAMO turns counts into frequencies, then adds 1e-4 and renormalizes. cuDAMO added 1e-4 to the raw counts, so an absent base got log(1e-4/n) (e.g. -15.4 instead of -9.2 at n = 500), which made the steps much larger.
+- **`--iterations`.** The option was passed positionally into `threads`, so every run used the 500-iteration default.
+- **Perfect separation.** When every positive outscores every negative, the overlap zone is empty. cuDAMO built PWMs from no sites (NaN) and crashed; it now stops, as there is nothing left to learn.
+
+Known deviations (not fixed):
+
+- **No level 2.** DAMO's adjacent-dinucleotide terms (`-i` in DAMO) are not implemented.
+- **Fixed sequence length.** The max pool assumes that all sequences have the same length. Variable-length input is not supported, and windows that overlap an `N` are scored (an `N` contributes 0) rather than skipped.
+- **Seed PWM.** The JASPAR seed gets Biopython's JASPAR pseudocounts, not DAMO's.
+
+Tests: `python -m pytest tests/ -q`.

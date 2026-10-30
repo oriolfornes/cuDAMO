@@ -55,7 +55,8 @@ def main(**args):
 
     # Optimize PWM
     pwm = damo(args["positive_seqs"], args["negative_seqs"],
-        args["jaspar_profile"], args["debugging"], args["iterations"])
+        args["jaspar_profile"], args["debugging"],
+        iterations=args["iterations"])
 
     # Write
     if args["output_file"] is None:
@@ -127,6 +128,10 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
 
             # Update PWM
             pwm_1 = _update_PWM(y_true_0, y_score_0, sites_0, lr, pwm_0)
+
+            # Perfect separation (i.e. no overlap zone): nothing to learn
+            if pwm_1 is None:
+                break
 
             # Get a PyTorch model of the updated PWM
             model = _get_PWM_model(pwm_1, positive_1he_seqs.shape[-1], device)
@@ -275,6 +280,10 @@ def _update_PWM(y_true, y_score, sites, lr, pwm):
     ix_first_negative = labels.index(0)
     ix_last_positive = len(labels) - labels[::-1].index(1)
 
+    # Perfect separation: no positive ranks below a negative
+    if ix_first_negative >= ix_last_positive:
+        return(None)
+
     # For each label, sequence...
     for s, l in z[ix_first_negative:ix_last_positive]:
         positive_mix.append(s) if l == 1 else negative_mix.append(s)
@@ -293,7 +302,8 @@ def __generate_PWM(sequences, motif_length):
     for i in range(motif_length):
         c = Counter(s[i:i+1] for s in sequences)
         pfm[i, :] = [c[key] for key in "ACGT"]
-    pfm = __normalize_PFM(__normalize_PFM(pfm, 1e-4))
+    # As in DAMO: counts to frequencies, then add 1e-4 and renormalize
+    pfm = __normalize_PFM(__normalize_PFM(pfm), 1e-4)
 
     return(np.log(pfm).T)
 
