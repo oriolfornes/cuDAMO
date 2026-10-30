@@ -18,8 +18,10 @@ pytest = "*"
 # The default environment uses CUDA builds of PyTorch on Linux. Use
 # `pixi run -e cpu ...` for CPU-only.
 [feature.cuda.target.linux-64.dependencies]
-pytorch = "2.14.*"
-pytorch-cuda = ">=11.6"
+pytorch = { version = "2.14.*", build = "cuda*" }
+
+[feature.cuda.system-requirements]
+cuda = "12"
 
 [feature.cuda.target.osx-arm64.dependencies]
 pytorch = { version = "2.14.*", channel = "conda-forge" }
