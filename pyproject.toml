@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cudamo"
+dynamic = ["version"]
+description = "A PyTorch implementation of DAMO that runs on CUDA GPUs when available"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "biopython>=1.81",
+    "click>=8.0",
+    "numpy>=1.21",
+    "scikit-learn>=1.1",
+    "torch>=1.13",
+    "tqdm>=4.64",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+cudamo = "cudamo.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "cudamo.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["cudamo*"]
