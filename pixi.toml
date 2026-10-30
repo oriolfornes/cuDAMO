@@ -1,0 +1,37 @@
+[workspace]
+name = "cudamo"
+version = "1.0.0"
+description = "A PyTorch implementation of DAMO that runs on CUDA GPUs when available"
+channels = ["pytorch", "conda-forge"]
+platforms = ["linux-64", "osx-arm64"]
+
+# Same pins as ExplaiNN-2's pixi.lock, so both can share an environment.
+[dependencies]
+python = "3.12.*"
+numpy = "2.5.*"
+biopython = "1.88.*"
+scikit-learn = "1.9.*"
+click = "8.5.*"
+tqdm = "4.70.*"
+pytest = "*"
+
+# The default environment uses CUDA builds of PyTorch on Linux. Use
+# `pixi run -e cpu ...` for CPU-only.
+[feature.cuda.target.linux-64.dependencies]
+pytorch = "2.14.*"
+pytorch-cuda = ">=11.6"
+
+[feature.cpu.dependencies]
+pytorch = "2.14.*"
+
+[feature.cpu.target.linux-64.dependencies]
+cpuonly = "*"
+
+[environments]
+default = { features = ["cuda"], solve-group = "default" }
+cpu = { features = ["cpu"], solve-group = "cpu" }
+
+[tasks]
+cudamo = { cmd = "python -m cudamo", description = "Run cuDAMO (pass the usual arguments)" }
+test = { cmd = "python -m pytest tests/ -q", description = "Run the tests" }
+example = { cmd = "mkdir -p results && python -m cudamo examples/positive_seqs.fa.gz examples/negative_seqs.fa.gz examples/MA1419.1.jaspar -o results/MA1419.1.pwm.txt", description = "Optimize the MA1419.1 example motif" }

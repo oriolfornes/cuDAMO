@@ -1,33 +1,64 @@
-cuDAMO
-=====
-A PyTorch-based (*i.e.* cuda) optimization of DAMO (https://github.com/sx-ruan/DAMO).
+# cuDAMO
 
-Dependencies
------
-cuDAMO has the following Python dependencies.
+A PyTorch version of [DAMO](https://github.com/sx-ruan/DAMO). It refines a JASPAR motif so that its best sites separate positive sequences from negative ones. It runs on the GPU when one is available.
 
-| Package | Version |
-|-|-|
-| [Biopython](https://biopython.org/) | 1.79 |
-| [Click](https://click.palletsprojects.com/en/8.0.x/) | 7.1.2 |
-| [NumPy](https://numpy.org/) | 1.21.2 |
-| [scikit-learn](https://scikit-learn.org/) | 0.24.2 |
-| [Python](https://www.python.org/) | 3.9.6 |
-| [PyTorch](https://pytorch.org/) | 1.9.0 |
-| [tqdm](https://github.com/tqdm/tqdm) | 4.62.1 |
+## Install
 
-Fidelity to DAMO
------
-Checked against `DAMO.py` (level 1). Fixed:
+With [pixi](https://pixi.sh):
 
-- **Pseudocounts.** DAMO turns counts into frequencies, then adds 1e-4 and renormalizes. cuDAMO added 1e-4 to the raw counts, so an absent base got log(1e-4/n) (e.g. -15.4 instead of -9.2 at n = 500), which made the steps much larger.
-- **`--iterations`.** The option was passed positionally into `threads`, so every run used the 500-iteration default.
-- **Perfect separation.** When every positive outscores every negative, the overlap zone is empty. cuDAMO built PWMs from no sites (NaN) and crashed; it now stops, as there is nothing left to learn.
+```bash
+pixi install            # CUDA build of PyTorch
+pixi install -e cpu     # CPU only
+```
 
-Known deviations (not fixed):
+Or with pip:
 
-- **No level 2.** DAMO's adjacent-dinucleotide terms (`-i` in DAMO) are not implemented.
-- **Fixed sequence length.** The max pool assumes that all sequences have the same length. Variable-length input is not supported, and windows that overlap an `N` are scored (an `N` contributes 0) rather than skipped.
-- **Seed PWM.** The JASPAR seed gets Biopython's JASPAR pseudocounts, not DAMO's.
+```bash
+pip install -e .
+```
 
-Tests: `python -m pytest tests/ -q`.
+## Usage
+
+```bash
+pixi run cudamo positive_seqs.fa.gz negative_seqs.fa.gz motif.jaspar -o motif.pwm.txt
+```
+
+Inputs are a FASTA file of positives, a FASTA file of negatives and a JASPAR matrix to start from. Plain or gzipped files both work.
+
+Options:
+
+- `-i, --iterations`: maximum number of iterations (default 500).
+- `-o, --output-file`: where to write the PWM. Without it, the PWM goes to stdout.
+- `-d, --debugging`: use only the first 1,000 sequences of each file.
+
+The output is the log PWM, one line per motif position with four columns (A, C, G, T). The `AUC optimized from ... to ...` line is printed to stdout too, so use `-o` to keep the matrix on its own.
+
+To try it on the bundled example:
+
+```bash
+pixi run example        # writes results/MA1419.1.pwm.txt
+```
+
+## Python API
+
+```python
+from cudamo.damo import damo
+
+pwm = damo("positive_seqs.fa.gz", "negative_seqs.fa.gz", "motif.jaspar", iterations=500)
+```
+
+`pwm` is a NumPy array of shape (4, motif length).
+
+## Differences from DAMO
+
+- Only level 1. The adjacent-dinucleotide terms (`-i` in DAMO.py) are not implemented.
+- All sequences in an input file must have the same length. Windows that overlap an `N` are scored with the `N` as zeros, not skipped.
+- The seed PWM gets Biopython's JASPAR pseudocounts, not DAMO's.
+
+## Tests
+
+```bash
+pixi run test
+```
+
+The one-hot encoding in `cudamo/sequence.py` is copied from ExplaiNN, so both packages encode sequences the same way.
