@@ -21,6 +21,9 @@ pytest = "*"
 pytorch = "2.14.*"
 pytorch-cuda = ">=11.6"
 
+[feature.cuda.target.osx-arm64.dependencies]
+pytorch = { version = "2.14.*", channel = "conda-forge" }
+
 [feature.cpu.dependencies]
 pytorch = "2.14.*"
 
