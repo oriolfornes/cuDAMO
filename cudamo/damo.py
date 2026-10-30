@@ -44,6 +44,8 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     device = "cpu"
     if torch.cuda.is_available():
         device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
     LEARNING_RATES = [1.0, 0.55, 0.1]
 
     # Get sequences, both strands
@@ -172,51 +174,27 @@ def _score_sequences(model, sequences_tensor, sequences, motif_length):
         Tuple (scores, sites): best score per sequence, and the matching
         site string.
     """
-    scores = []
-    sites = []
-
     # Get predictions
     with torch.no_grad():
         scores_tmp, sites_tmp = model(sequences_tensor)
-    scores_tmp = scores_tmp.flatten().tolist()
-    sites_tmp = sites_tmp.flatten().tolist()
+    scores_tmp = scores_tmp.flatten()
+    sites_tmp = sites_tmp.flatten()
 
-    # Zip predictions from the same sequences (i.e. fwd and rev strands)
-    z = list(zip(scores_tmp, sites_tmp, list(range(len(sequences)))))
-    z = list(zip(z[:len(z)//2], z[len(z)//2:]))
+    # Forward strands come first, reverse complements after. Ties go to the
+    # reverse strand, as in DAMO.
+    half = len(sequences) // 2
+    use_fwd = scores_tmp[:half] > scores_tmp[half:]
+    scores = torch.where(use_fwd, scores_tmp[:half], scores_tmp[half:]).tolist()
+    positions = torch.where(use_fwd, sites_tmp[:half], sites_tmp[half:]).tolist()
+    use_fwd = use_fwd.tolist()
 
-    # For each prediction...
-    for fwd, rev in z:
-        score, site = _get_best_site(fwd, rev, sequences, motif_length)
-        scores.append(score)
-        sites.append(site)
+    # Get the site strings
+    sites = []
+    for i in range(half):
+        seq = sequences[i] if use_fwd[i] else sequences[half + i]
+        sites.append(seq[positions[i]:positions[i] + motif_length])
 
     return scores, sites
-
-
-def _get_best_site(fwd, rev, sequences, motif_length):
-    """
-    Pick the better of the forward and reverse strand hits.
-
-    Ties go to the reverse strand, as in DAMO.
-
-    Args:
-        fwd: (score, position, sequence index) on the forward strand.
-        rev: (score, position, sequence index) on the reverse strand.
-        sequences: Sequence strings.
-        motif_length: Length of the PWM.
-
-    Returns:
-        Tuple (score, site string).
-    """
-    if fwd[0] > rev[0]:
-        score = fwd[0]
-        site = sequences[fwd[2]][fwd[1]:fwd[1]+motif_length]
-    else:
-        score = rev[0]
-        site = sequences[rev[2]][rev[1]:rev[1]+motif_length]
-
-    return score, site
 
 
 def _compute_auc(positive_scores, negative_scores):
