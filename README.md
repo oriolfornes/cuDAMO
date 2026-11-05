@@ -68,7 +68,7 @@ pixi run cudamo pos.fa.gz neg.fa.gz motif.jaspar --widths 6,9,12 -o motif.pwm.tx
 
 This is not DiMO's own width procedure (section 2.6 of the [paper](https://pubmed.ncbi.nlm.nih.gov/24369152/)), which pads the motif to about 20 columns, cuts it to the central 6 and restores columns one at a time. On the IRF4 example that procedure picked 8 columns and lost held-out AUC (0.668 against 0.712 at the seed width), because the signal is spread over many columns and it stops at the first column that does not pay.
 
-The returned motif is optimized on the 80% only, and its held-out AUC was also used to pick the width, so that number is slightly optimistic. Held-out gains are modest: on 154 IBIS motifs with 19 bp windows, the chosen width averaged 13.6 columns and scored about the same as the full 19 on a separate test set (+0.002, within noise), while 8 columns lost 0.02.
+The returned motif is optimized on the 80% only, and its held-out AUC was also used to pick the width, so that number is slightly optimistic. Held-out gains are modest: on 154 IBIS motifs with 19 bp windows, the chosen width averaged 13.7 columns and scored about the same as the full 19 on a separate test set (+0.002, within noise), while 8 columns lost 0.02.
 
 ## Python API
 
