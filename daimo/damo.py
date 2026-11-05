@@ -18,7 +18,7 @@ from tqdm import tqdm
 from daimo.io import read_pwm, read_sequences
 from daimo.sequence import dna_one_hot_many
 
-bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
+bar_format = "{desc}{percentage:3.0f}%|{bar:20}{r_bar}"
 
 
 # Motif width search: how much held-out AUC
@@ -140,7 +140,7 @@ def damo(positive_seqs_file, negative_seqs_file, motif_file,
         positives = _encode(positive_records, device)
         negatives = _encode(negative_records, device)
         pwm, original_auc, auc = _optimize(pwm, positives, negatives,
-            iterations, device, desc=f"Width {pwm.shape[1]}")
+            iterations, device, desc=f"Optimizing width {pwm.shape[1]}: ")
         print("\n" + f"AUC optimized from {original_auc} to {auc}." + "\n")
 
         return pwm
@@ -166,7 +166,7 @@ def damo(positive_seqs_file, negative_seqs_file, motif_file,
     pwms, aucs = {}, {}
     for k in candidates:
         pwms[k], _, _ = _optimize(_resize(pwm, k), positives, negatives,
-            iterations, device, desc=f"Width {k}")
+            iterations, device, desc=f"Optimizing width {k}: ")
         aucs[k] = _auc(pwms[k], positives_val, negatives_val, device)
     best = _choose_width(aucs)
 
