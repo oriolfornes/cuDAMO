@@ -1,8 +1,10 @@
 """DAMO (Discriminative Additive Model Optimization) in PyTorch.
 
-Level 1 of DAMO.py (https://github.com/sx-ruan/DAMO): a single PWM is
-refined so that the best site in each sequence separates positives
-from negatives.
+Level 1 of DAMO.py (https://github.com/sx-ruan/DAMO), which is DiMO
+(Patel and Stormo, 2014): a single PWM is refined so that the best site in
+each sequence separates positives from negatives. The motif can also be
+optimized at several widths, keeping the one that does best on held-out
+sequences.
 """
 
 import copy
@@ -19,8 +21,24 @@ from cudamo.sequence import dna_one_hot_many
 bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
 
 
+# Motif width search: widths tried when none are given, how much held-out AUC
+# a wider motif may lose against the best one before it is passed over, and
+# the fraction of sequences held out
+DEFAULT_WIDTHS = (8, 10, 12, 15, 17, 19)
+WIDTH_TOLERANCE = 0.002
+VALIDATION_FRACTION = 0.2
+
+# Scale applied to the PWM before it is written as frequencies. The optimized
+# weights are large, so at 1 (DiMO's unscaled conversion) the columns are
+# nearly one-hot and the file loses the ranking of sites: on 154 IBIS motifs a
+# MEME round trip kept 0.692 AUC at scale 1 and 0.711 at 0.1 (PWM: 0.712).
+DEFAULT_SCALE = 0.1
+LEARNING_RATES = [1.0, 0.55, 0.1]
+
+
 def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
-         debugging=False, iterations=500):
+         debugging=False, iterations=500, motif_name=None,
+         widths=None, seed=1714):
     """
     Optimize a PWM to separate positive from negative sequences.
 
@@ -29,46 +47,123 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     the sites of negatives. It stops early when the AUC stops improving,
     or when the classes are perfectly separated.
 
+    With widths, the motif is optimized at each width and the best one is
+    kept. 20% of the sequences of each class are held out. For each width
+    the seed is cut to its most informative columns, or padded with
+    uniform ones, optimized on the other 80%, and scored on the held-out
+    sequences. The seed's own width is always tried. The smallest width
+    within 0.002 of the best held-out AUC wins.
+
     Args:
         positive_seqs_file: FASTA file of positive sequences.
         negative_seqs_file: FASTA file of negative sequences.
-        jaspar_profile_file: JASPAR matrix used as the seed PWM.
+        jaspar_profile_file: JASPAR or MEME motif used as the seed PWM.
         debugging: If True, use only the first 1,000 sequences per file.
         iterations: Maximum number of optimization iterations.
+        motif_name: Motif to use when a MEME file has several.
+        widths: Motif widths to try (None: only the seed's width, with no
+            held-out set). Widths longer than the sequences are skipped.
+        seed: Random seed of the held-out split (widths only).
 
     Returns:
-        Log PWM of shape (4, motif length), rows A, C, G and T.
+        Log PWM of shape (4, motif length), rows A, C, G and T. The
+        motif length is the seed's unless widths are given.
     """
 
-    # Initialize
-    device = "cpu"
+    device = _get_device()
+
+    # Get sequences, and the seed PWM
+    positive_records = read_sequences(positive_seqs_file, debugging)
+    negative_records = read_sequences(negative_seqs_file, debugging)
+    pwm = read_pwm(jaspar_profile_file, motif_name)
+
+    if widths is None:
+        positives = _encode(positive_records, device)
+        negatives = _encode(negative_records, device)
+        pwm, original_auc, auc = _optimize(pwm, positives, negatives,
+            iterations, device)
+        print("\n" + f"AUC optimized from {original_auc} to {auc}." + "\n")
+
+        return pwm
+
+    # Hold out sequences to compare the widths
+    positive_records, positive_val = _split(positive_records, seed)
+    negative_records, negative_val = _split(negative_records, seed)
+    positives = _encode(positive_records, device)
+    negatives = _encode(negative_records, device)
+    positives_val = _encode(positive_val, device)
+    negatives_val = _encode(negative_val, device)
+
+    # Widths to try, as far as the sequences allow
+    sequence_length = positives[1].shape[-1]
+    candidates = sorted({int(k) for k in widths} | {pwm.shape[1]})
+    candidates = [k for k in candidates if 1 <= k <= sequence_length]
+    if not candidates:
+        raise ValueError(f"No width fits sequences of length {sequence_length}")
+
+    # Optimize at each width
+    pwms, aucs = {}, {}
+    for k in candidates:
+        pwms[k], _, _ = _optimize(_resize(pwm, k), positives, negatives,
+            iterations, device, desc=f"Width {k}")
+        aucs[k] = _auc(pwms[k], positives_val, negatives_val, device)
+    best = _choose_width(aucs)
+
+    seed_auc = _auc(pwm, positives_val, negatives_val, device)
+    print("\n" + f"AUC on held-out sequences: seed {seed_auc}")
+    for k in candidates:
+        print(f"  width {k:>3}: {aucs[k]}" + ("  <- chosen" if k == best else ""))
+    print()
+
+    return pwms[best]
+
+
+def _get_device():
+    """The best available torch device."""
     if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    LEARNING_RATES = [1.0, 0.55, 0.1]
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
-    # Get sequences, both strands
-    positive_seqs = read_sequences(positive_seqs_file, debugging)
-    negative_seqs = read_sequences(negative_seqs_file, debugging)
-    positive_seqs = [str(s.seq).upper() for s in positive_seqs] + \
-        [str(s.reverse_complement().seq).upper() for s in positive_seqs]
-    negative_seqs = [str(s.seq).upper() for s in negative_seqs] + \
-        [str(s.reverse_complement().seq).upper() for s in negative_seqs]
 
-    # One-hot encode sequences
-    positive_1he_seqs = dna_one_hot_many(positive_seqs)
-    negative_1he_seqs = dna_one_hot_many(negative_seqs)
+def _encode(records, device):
+    """
+    Both strands of the records, one-hot encoded.
 
-    # Sequences to Tensor
-    positive_seqs_tensor = torch.Tensor(positive_1he_seqs.tolist()).to(device)
-    negative_seqs_tensor = torch.Tensor(negative_1he_seqs.tolist()).to(device)
+    Returns:
+        Tuple (sequences, tensor): the forward strands first and the
+        reverse complements after, as strings and as a one-hot tensor.
+    """
+    sequences = [str(s.seq).upper() for s in records] + \
+        [str(s.reverse_complement().seq).upper() for s in records]
+    one_hot = dna_one_hot_many(sequences)
 
-    # Get PWM
-    pwm = read_pwm(jaspar_profile_file)
+    return sequences, torch.Tensor(one_hot.tolist()).to(device)
+
+
+def _optimize(pwm, positives, negatives, iterations, device, desc=None):
+    """
+    Run the optimization loop on a seed PWM.
+
+    Args:
+        pwm: Seed log PWM of shape (4, motif length).
+        positives: Tuple (sequences, tensor) from _encode.
+        negatives: Tuple (sequences, tensor) from _encode.
+        iterations: Maximum number of iterations.
+        device: Torch device.
+        desc: Label for the progress bar.
+
+    Returns:
+        Tuple (pwm, original_auc, auc): the optimized PWM, and the AUC
+        of the seed and of the PWM returned.
+    """
+    positive_seqs, positive_seqs_tensor = positives
+    negative_seqs, negative_seqs_tensor = negatives
+    sequence_length = positive_seqs_tensor.shape[-1]
 
     # Get a PyTorch model of the PWM
-    model = _get_pwm_model(pwm, positive_1he_seqs.shape[-1], device)
+    model = _get_pwm_model(pwm, sequence_length, device)
 
     # Score sequences
     positive_scores, positive_sites = _score_sequences(
@@ -84,7 +179,8 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     auc = copy.copy(original_auc)
 
     # For each iteration...
-    for _ in tqdm(range(iterations), total=iterations, bar_format=bar_format):
+    for _ in tqdm(range(iterations), total=iterations, desc=desc,
+                  bar_format=bar_format):
 
         # Initialize
         pwm_0 = copy.copy(pwm)
@@ -104,7 +200,7 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
                 break
 
             # Get a PyTorch model of the updated PWM
-            model = _get_pwm_model(pwm_1, positive_1he_seqs.shape[-1], device)
+            model = _get_pwm_model(pwm_1, sequence_length, device)
 
             # Score sequences
             positive_scores, positive_sites = _score_sequences(
@@ -114,22 +210,121 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
                 model, negative_seqs_tensor, negative_seqs, pwm_1.shape[1],
             )
 
-            # Compute AUC
-            auc, y_true, y_score = _compute_auc(positive_scores,
+            # Compute AUC of the candidate
+            auc_1, y_true_1, y_score_1 = _compute_auc(positive_scores,
                 negative_scores)
 
-            # Early stop
-            if auc > auc_0:
+            # Accept the candidate only if it improves the AUC. A rejected
+            # candidate must not leak into auc, which is reported at the end.
+            if auc_1 > auc_0:
                 pwm = copy.copy(pwm_1)
+                auc, y_true, y_score = auc_1, y_true_1, y_score_1
                 break
 
         # Early stop
         if np.array_equal(pwm_0, pwm):
             break
 
-    print("\n" + f"AUC optimized from {original_auc} to {auc}." + "\n")
+    return pwm, original_auc, auc
 
-    return pwm
+
+def _auc(pwm, positives, negatives, device):
+    """AUC of a PWM on encoded sequences (best site on either strand)."""
+    sequence_length = positives[1].shape[-1]
+    model = _get_pwm_model(pwm, sequence_length, device)
+    positive_scores, _ = _score_sequences(model, positives[1], positives[0],
+        pwm.shape[1])
+    negative_scores, _ = _score_sequences(model, negatives[1], negatives[0],
+        pwm.shape[1])
+
+    return _compute_auc(positive_scores, negative_scores)[0]
+
+
+def _split(records, seed, fraction=VALIDATION_FRACTION):
+    """Randomly hold out a fraction of the records; returns (train, held out)."""
+    n_val = max(1, int(round(len(records) * fraction)))
+    if len(records) - n_val < 1:
+        raise ValueError("Too few sequences to hold out a validation set")
+    held_out = set(np.random.RandomState(seed).permutation(len(records))[:n_val].tolist())
+
+    return ([r for i, r in enumerate(records) if i not in held_out],
+            [records[i] for i in sorted(held_out)])
+
+
+def _resize(pwm, width):
+    """
+    Cut a PWM down to its most informative columns, or pad it.
+
+    A narrower width keeps the run of columns with the most information
+    (ties go to the most central run). A wider one adds uniform columns,
+    half on each side (the odd one on the right).
+
+    Args:
+        pwm: Log PWM of shape (4, motif length).
+        width: Wanted number of columns.
+
+    Returns:
+        Log PWM of shape (4, width).
+    """
+    motif_length = pwm.shape[1]
+    if width == motif_length:
+        return pwm
+
+    if width > motif_length:
+        left = (width - motif_length) // 2
+        right = width - motif_length - left
+        return np.hstack([np.full((4, left), np.log(0.25)), pwm,
+                          np.full((4, right), np.log(0.25))])
+
+    # Information content of each column, in bits
+    pfm = pwm_to_pfm(pwm)
+    information = (pfm * np.log2(pfm / 0.25)).sum(axis=0)
+    totals = np.convolve(information, np.ones(width), mode="valid")
+    centre = (motif_length - width) / 2
+    start = min(range(len(totals)), key=lambda i: (-round(totals[i], 9),
+                                                    abs(i - centre)))
+
+    return pwm[:, start:start + width]
+
+
+def _choose_width(aucs, tolerance=WIDTH_TOLERANCE):
+    """
+    Pick a width from the held-out AUC of each.
+
+    The smallest width within the tolerance of the best AUC wins, so extra
+    columns have to pay for themselves.
+
+    Args:
+        aucs: Dict mapping width to held-out AUC.
+        tolerance: Held-out AUC a narrower motif may lose against the best.
+
+    Returns:
+        The chosen width.
+    """
+    best = max(aucs.values())
+
+    return min(k for k, auc in aucs.items() if auc >= best - tolerance - 1e-12)
+
+
+def pwm_to_pfm(pwm, scale=1.0):
+    """
+    Convert a log PWM to a PFM with a Boltzmann distribution.
+
+    As in DiMO (Patel and Stormo, 2014), the weights are read as energies
+    in units of kT: each position is a softmax over A, C, G and T. A scale
+    above 1 sharpens the columns and one below 1 flattens them.
+
+    Args:
+        pwm: Log PWM of shape (4, motif length), rows A, C, G and T.
+        scale: Factor applied to the weights before the softmax.
+
+    Returns:
+        Frequencies of shape (4, motif length); each column sums to 1.
+    """
+    scaled = scale * np.asarray(pwm, float)
+    z = np.exp(scaled - scaled.max(axis=0, keepdims=True))
+
+    return z / z.sum(axis=0, keepdims=True)
 
 
 def _get_pwm_model(pwm, sequence_length, device="cpu"):

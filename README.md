@@ -23,21 +23,52 @@ pip install -e .
 pixi run cudamo positive_seqs.fa.gz negative_seqs.fa.gz motif.jaspar -o motif.pwm.txt
 ```
 
-Inputs are a FASTA file of positives, a FASTA file of negatives and a JASPAR matrix to start from. Plain or gzipped files both work.
+Inputs are a FASTA file of positives, a FASTA file of negatives and a motif to start from, as a JASPAR matrix or a MEME file (detected from the content). Plain or gzipped files both work.
 
 Options:
 
 - `-i, --iterations`: maximum number of iterations (default 500).
-- `-o, --output-file`: where to write the PWM. Without it, the PWM goes to stdout.
+- `-o, --output-file`: where to write the motif (`.gz` to compress). Without it, it goes to stdout.
+- `--oformat`: `pwm` (default), `jaspar` or `meme`. See below.
 - `-d, --debugging`: use only the first 1,000 sequences of each file.
+- `-w, --optimize-width`: also optimize the motif width: try several widths and keep the best on held-out sequences (see below).
+- `--widths`: comma-separated widths to try; implies `-w`.
+- `-m, --motif`: which motif to use when a MEME file has several, by name or by ID (e.g. `MA1419.1`). Not needed for single-motif files. MEME matrices are probabilities, so 1e-4 is added and the columns renormalized before taking the log, as DAMO does for the PFMs it builds.
+- `--scale`: with `--oformat jaspar` or `meme`, a factor applied to the PWM before converting it to frequencies (default 0.1). Above 1 sharpens the columns, below 1 flattens them. 1 is DiMO's unscaled conversion, but the optimized weights are large, so the columns come out nearly one-hot and the ranking of sites does not survive the rounding of the file. On 154 IBIS motifs, a MEME round trip kept 0.692 AUC at scale 1, 0.711 at 0.1 and 0.712 at 0.02 (the PWM itself: 0.712). The right value depends on the spread of the weights, so check it on your data if it matters.
 
-The output is the log PWM, one line per motif position with four columns (A, C, G, T). The `AUC optimized from ... to ...` line is printed to stdout too, so use `-o` to keep the matrix on its own.
+The input format is detected from the file. The output format is set with `--oformat`:
+
+- `pwm` (default): the log PWM, one line per motif position with four columns (A, C, G, T).
+- `jaspar`: frequencies (not counts) as a JASPAR matrix.
+- `meme`: frequencies as a MEME file, laid out as ExplaiNN-2 writes it (`nsites` is a placeholder).
+
+For `jaspar` and `meme` the PWM weights are scaled (`--scale`, default 0.1), read as energies in kT and converted with a Boltzmann distribution (a softmax over A, C, G and T at each position), as in [DiMO](https://pubmed.ncbi.nlm.nih.gov/24369152/). The scale sets the sharpness, so information content is only comparable between motifs written with the same scale. The motif keeps the name of the seed: the JASPAR ID and name, or the MEME `MOTIF` line.
+
+The `AUC optimized from ... to ...` line is printed to stdout too, so use `-o` to keep the matrix on its own.
 
 To try it on the bundled example:
 
 ```bash
 pixi run example        # writes results/MA1419.1.pwm.txt
 ```
+
+## Motif width
+
+By default the motif keeps the width of the seed. `-w` tries several widths and keeps the best one:
+
+```bash
+pixi run cudamo pos.fa.gz neg.fa.gz motif.jaspar -w -o motif.pwm.txt
+pixi run cudamo pos.fa.gz neg.fa.gz motif.jaspar --widths 6,9,12 -o motif.pwm.txt
+```
+
+- 20% of the sequences of each class are held out (fixed seed).
+- For each width the seed is cut to its most informative run of columns, or padded with uniform columns (half on each side), and optimized on the other 80%. The seed's own width is always tried too. Widths longer than the sequences are skipped.
+- Each result is scored on the held-out sequences, and the smallest width within 0.002 AUC of the best one wins, so extra columns have to pay for themselves.
+- The widths and their held-out AUCs are printed, with the chosen one marked. `--widths` sets the list (default 8, 10, 12, 15, 17, 19) and implies `-w`.
+
+This is not DiMO's own width procedure (section 2.6 of the [paper](https://pubmed.ncbi.nlm.nih.gov/24369152/)), which pads the motif to about 20 columns, cuts it to the central 6 and restores columns one at a time. On the IRF4 example that procedure picked 8 columns and lost held-out AUC (0.668 against 0.712 at the seed width), because the signal is spread over many columns and it stops at the first column that does not pay.
+
+The returned motif is optimized on the 80% only, and its held-out AUC was also used to pick the width, so that number is slightly optimistic. Held-out gains are modest: on 154 IBIS motifs with 19 bp windows, the chosen width averaged 13.7 columns and scored about the same as the full 19 on a separate test set (+0.002, within noise), while 8 columns lost 0.02.
 
 ## Python API
 
@@ -51,7 +82,7 @@ pwm = damo("positive_seqs.fa.gz", "negative_seqs.fa.gz", "motif.jaspar", iterati
 
 ## Differences from DAMO
 
-- Only level 1. The adjacent-dinucleotide terms (`-i` in DAMO.py) are not implemented.
+- Only level 1, which is DiMO. The adjacent-dinucleotide terms (`-i` in DAMO.py) are not implemented.
 - All sequences in an input file must have the same length. Windows that overlap an `N` are scored with the `N` as zeros, not skipped.
 - The seed PWM gets Biopython's JASPAR pseudocounts, not DAMO's.
 
