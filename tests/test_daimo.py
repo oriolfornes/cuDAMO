@@ -318,8 +318,6 @@ def test_width_options_reach_damo(monkeypatch, tmp_path):
     out = str(tmp_path / "o.txt")
     CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-o", out])
     assert seen["widths"] is None
-    CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-w", "-o", out])
-    assert seen["widths"] == [8, 10, 12, 15, 17, 19]
     CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", "6,9", "-o", out])
     assert seen["widths"] == "6,9"
     CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", "5-19", "-o", out])

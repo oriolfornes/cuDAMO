@@ -4,7 +4,7 @@ import sys
 
 import click
 
-from daimo.damo import (DEFAULT_SCALE, DEFAULT_WIDTHS, _parse_width_ranges,
+from daimo.damo import (DEFAULT_SCALE, _parse_width_ranges,
                         damo, pwm_to_pfm)
 from daimo.io import (open_file, read_motif, write_jaspar, write_meme,
                        write_pwm)
@@ -56,17 +56,10 @@ def _check_widths(value):
     type=click.Path(resolve_path=True),
 )
 @click.option(
-    "-w", "--optimize-width",
-    help="Also optimize the motif width: try several widths (see --widths) "
-         "and keep the one that does best on held-out sequences.",
-    is_flag=True,
-)
-@click.option(
     "--widths",
     help="Widths to try, as a list in the style of cut -f: 8,10,12 or 5-19 or "
          "5-8,12,15- (-M is 1 to M, N- is N up to the sequence length). "
-         "Implies -w. "
-         f"[default: {','.join(map(str, DEFAULT_WIDTHS))}]",
+         "[default: the width of the seed motif]",
     callback=lambda ctx, param, value: _check_widths(value),
 )
 @click.option(
@@ -85,12 +78,12 @@ def _check_widths(value):
     "--scale",
     help="With --oformat jaspar or meme: factor applied to the PWM before "
          "converting it to frequencies; above 1 sharpens the columns, "
-         "below 1 flattens them. The default keeps the ranking of sites "
+         "below 1 flattens them. 0.1 keeps the ranking of sites "
          "through the rounding of the output file; 1 is DiMO's unscaled "
          "conversion and gives nearly one-hot columns.",
     type=click.FloatRange(min=0, min_open=True),
-    default=None,
-    show_default=False,
+    default=DEFAULT_SCALE,
+    show_default=True,
 )
 def main(**args):
     """Optimize a JASPAR or MEME motif to separate positive from negative sequences.
@@ -101,26 +94,24 @@ def main(**args):
     PWM weights are read as energies (kT) and converted with a Boltzmann
     distribution, as in DiMO, after scaling them by 0.1 (see --scale).
     """
-    if args["scale"] is not None and args["oformat"] == "pwm":
+    ctx = click.get_current_context()
+    scale_given = (ctx.get_parameter_source("scale")
+                   != click.core.ParameterSource.DEFAULT)
+    if scale_given and args["oformat"] == "pwm":
         raise click.UsageError(
             "--scale only applies with --oformat jaspar or meme")
-
-    widths = args["widths"]
-    if widths is None and args["optimize_width"]:
-        widths = list(DEFAULT_WIDTHS)
 
     pwm = damo(args["positive_seqs"], args["negative_seqs"],
         args["seed_motif"], args["debugging"],
         iterations=args["iterations"], motif_name=args["motif"],
-        widths=widths)
+        widths=args["widths"])
 
     if args["oformat"] == "pwm":
         def write(handle):
             write_pwm(pwm, handle)
     else:
         name, _ = read_motif(args["seed_motif"], args["motif"])
-        scale = DEFAULT_SCALE if args["scale"] is None else args["scale"]
-        pfm = pwm_to_pfm(pwm, scale)
+        pfm = pwm_to_pfm(pwm, args["scale"])
         writer = write_jaspar if args["oformat"] == "jaspar" else write_meme
 
         def write(handle):
