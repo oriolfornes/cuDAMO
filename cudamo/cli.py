@@ -4,7 +4,7 @@ import sys
 
 import click
 
-from cudamo.damo import DEFAULT_WIDTHS, damo, pwm_to_pfm
+from cudamo.damo import DEFAULT_SCALE, DEFAULT_WIDTHS, damo, pwm_to_pfm
 from cudamo.io import (open_file, read_motif, write_jaspar, write_meme,
                        write_pwm)
 
@@ -72,8 +72,12 @@ CONTEXT_SETTINGS = {
     "--scale",
     help="With --oformat jaspar or meme: factor applied to the PWM before "
          "converting it to frequencies; above 1 sharpens the columns, "
-         "below 1 flattens them. [default: 1]",
+         "below 1 flattens them. The default keeps the ranking of sites "
+         "through the rounding of the output file; 1 is DiMO's unscaled "
+         "conversion and gives nearly one-hot columns.",
     type=click.FloatRange(min=0, min_open=True),
+    default=None,
+    show_default=False,
 )
 def main(**args):
     """Optimize a JASPAR or MEME motif to separate positive from negative sequences.
@@ -82,7 +86,7 @@ def main(**args):
     by default, with one line per position and four columns (A, C, G, T).
     With --oformat jaspar or meme it is a motif of frequencies instead: the
     PWM weights are read as energies (kT) and converted with a Boltzmann
-    distribution, as in DiMO.
+    distribution, as in DiMO, after scaling them by 0.1 (see --scale).
     """
     if args["scale"] is not None and args["oformat"] == "pwm":
         raise click.UsageError(
@@ -102,7 +106,8 @@ def main(**args):
             write_pwm(pwm, handle)
     else:
         name, _ = read_motif(args["jaspar_profile"], args["motif"])
-        pfm = pwm_to_pfm(pwm, args["scale"] or 1.0)
+        scale = DEFAULT_SCALE if args["scale"] is None else args["scale"]
+        pfm = pwm_to_pfm(pwm, scale)
         writer = write_jaspar if args["oformat"] == "jaspar" else write_meme
 
         def write(handle):

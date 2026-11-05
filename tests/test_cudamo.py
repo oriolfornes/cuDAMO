@@ -92,7 +92,7 @@ def test_oformat_jaspar_is_readable_and_keeps_the_name(monkeypatch, tmp_path):
 def test_oformat_meme_round_trips(monkeypatch, tmp_path):
     pwm = np.log(np.array([[.7, .1], [.1, .2], [.1, .3], [.1, .4]]))
     out = tmp_path / "motif.meme"
-    res = _run(monkeypatch, tmp_path, ["--oformat", "meme", "-o", str(out)], pwm)
+    res = _run(monkeypatch, tmp_path, ["--oformat", "meme", "--scale", "1", "-o", str(out)], pwm)
     assert res.exit_code == 0, res.output
     assert "MOTIF MA1419.1 IRF4" in out.read_text()
     back = read_pwm(str(out))
@@ -106,6 +106,21 @@ def test_oformat_defaults_to_the_log_pwm(monkeypatch, tmp_path):
     out = tmp_path / "motif.txt"
     assert _run(monkeypatch, tmp_path, ["-o", str(out)], pwm).exit_code == 0
     np.testing.assert_allclose(np.loadtxt(out).T, pwm, atol=1e-8)
+
+
+def test_frequency_formats_default_to_scale_0_1(monkeypatch, tmp_path):
+    pwm = np.log(np.array([[.7, .1], [.1, .2], [.1, .3], [.1, .4]])) * 20
+    out = tmp_path / "motif.meme"
+    assert _run(monkeypatch, tmp_path, ["--oformat", "meme", "-o", str(out)], pwm).exit_code == 0
+    written = np.exp(read_pwm(str(out)))
+    written /= written.sum(axis=0)
+    np.testing.assert_allclose(written, pwm_to_pfm(pwm, .1), atol=5e-4)
+    # an explicit scale of 1 still gives DiMO's unscaled conversion
+    out1 = tmp_path / "motif1.meme"
+    assert _run(monkeypatch, tmp_path, ["--oformat", "meme", "--scale", "1", "-o", str(out1)], pwm).exit_code == 0
+    unscaled = np.exp(read_pwm(str(out1)))
+    unscaled /= unscaled.sum(axis=0)
+    np.testing.assert_allclose(unscaled, pwm_to_pfm(pwm, 1.), atol=5e-4)
 
 
 def test_oformat_writes_to_stdout(monkeypatch, tmp_path):

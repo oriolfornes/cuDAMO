@@ -27,6 +27,12 @@ bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
 DEFAULT_WIDTHS = (8, 10, 12, 15, 17, 19)
 WIDTH_TOLERANCE = 0.002
 VALIDATION_FRACTION = 0.2
+
+# Scale applied to the PWM before it is written as frequencies. The optimized
+# weights are large, so at 1 (DiMO's unscaled conversion) the columns are
+# nearly one-hot and the file loses the ranking of sites: on 154 IBIS motifs a
+# MEME round trip kept 0.692 AUC at scale 1 and 0.711 at 0.1 (PWM: 0.712).
+DEFAULT_SCALE = 0.1
 LEARNING_RATES = [1.0, 0.55, 0.1]
 
 

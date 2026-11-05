@@ -34,7 +34,7 @@ Options:
 - `-w, --optimize-width`: also optimize the motif width: try several widths and keep the best on held-out sequences (see below).
 - `--widths`: comma-separated widths to try; implies `-w`.
 - `-m, --motif`: which motif to use when a MEME file has several, by name or by ID (e.g. `MA1419.1`). Not needed for single-motif files. MEME matrices are probabilities, so 1e-4 is added and the columns renormalized before taking the log, as DAMO does for the PFMs it builds.
-- `--scale`: with `--oformat jaspar` or `meme`, a factor applied to the PWM before converting it to frequencies (default 1). Above 1 sharpens the columns, below 1 flattens them. The weights are discriminative scores, not probabilities, so the frequencies at scale 1 are nearly one-hot; try 0.05 to 0.1 for a more readable motif.
+- `--scale`: with `--oformat jaspar` or `meme`, a factor applied to the PWM before converting it to frequencies (default 0.1). Above 1 sharpens the columns, below 1 flattens them. 1 is DiMO's unscaled conversion, but the optimized weights are large, so the columns come out nearly one-hot and the ranking of sites does not survive the rounding of the file. On 154 IBIS motifs, a MEME round trip kept 0.692 AUC at scale 1, 0.711 at 0.1 and 0.712 at 0.02 (the PWM itself: 0.712). The right value depends on the spread of the weights, so check it on your data if it matters.
 
 The input format is detected from the file. The output format is set with `--oformat`:
 
@@ -42,7 +42,7 @@ The input format is detected from the file. The output format is set with `--ofo
 - `jaspar`: frequencies (not counts) as a JASPAR matrix.
 - `meme`: frequencies as a MEME file, laid out as ExplaiNN-2 writes it (`nsites` is a placeholder).
 
-For `jaspar` and `meme` the PWM weights are read as energies in kT and converted with a Boltzmann distribution (a softmax over A, C, G and T at each position), as in [DiMO](https://pubmed.ncbi.nlm.nih.gov/24369152/). The motif keeps the name of the seed: the JASPAR ID and name, or the MEME `MOTIF` line.
+For `jaspar` and `meme` the PWM weights are scaled (`--scale`, default 0.1), read as energies in kT and converted with a Boltzmann distribution (a softmax over A, C, G and T at each position), as in [DiMO](https://pubmed.ncbi.nlm.nih.gov/24369152/). The scale sets the sharpness, so information content is only comparable between motifs written with the same scale. The motif keeps the name of the seed: the JASPAR ID and name, or the MEME `MOTIF` line.
 
 The `AUC optimized from ... to ...` line is printed to stdout too, so use `-o` to keep the matrix on its own.
 
