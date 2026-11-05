@@ -115,13 +115,15 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
                 model, negative_seqs_tensor, negative_seqs, pwm_1.shape[1],
             )
 
-            # Compute AUC
-            auc, y_true, y_score = _compute_auc(positive_scores,
+            # Compute AUC of the candidate
+            auc_1, y_true_1, y_score_1 = _compute_auc(positive_scores,
                 negative_scores)
 
-            # Early stop
-            if auc > auc_0:
+            # Accept the candidate only if it improves the AUC. A rejected
+            # candidate must not leak into auc, which is reported at the end.
+            if auc_1 > auc_0:
                 pwm = copy.copy(pwm_1)
+                auc, y_true, y_score = auc_1, y_true_1, y_score_1
                 break
 
         # Early stop

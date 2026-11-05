@@ -8,15 +8,19 @@ import os
 import random
 
 import numpy as np
+import torch
 from Bio import motifs
+from Bio.Seq import Seq
 from click.testing import CliRunner
 
 import pytest
 
 from cudamo import cli
 from cudamo.io import read_pwm
-from cudamo.damo import _generate_pwm, _update_pwm, damo, pwm_to_pfm
-from cudamo.sequence import dna_one_hot
+from cudamo.damo import (_compute_auc, _generate_pwm, _get_pwm_model,
+                         _score_sequences, _update_pwm, damo, pwm_to_pfm)
+from cudamo.io import read_sequences
+from cudamo.sequence import dna_one_hot, dna_one_hot_many
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JASPAR = os.path.join(ROOT, "examples", "MA1419.1.jaspar")
@@ -160,3 +164,32 @@ def test_damo_returns_on_separable_data(tmp_path):
     neg.write_text("".join(f">n{i}\n{rand(40 + len(site))}\n" for i in range(50)))
     pwm = damo(str(pos), str(neg), JASPAR, iterations=20)
     assert np.isfinite(pwm).all()
+
+
+def test_reported_auc_is_the_accepted_one(tmp_path, capsys):
+    # Weak signal: the run ends when every learning rate is rejected. The
+    # reported final AUC must be that of the returned PWM, not of the last
+    # rejected candidate.
+    with open(JASPAR) as f:
+        site = str(motifs.read(f, "jaspar").consensus)
+    rng = random.Random(7)
+    rand = lambda n: "".join(rng.choice("ACGT") for _ in range(n))  # noqa: E731
+    pos, neg = tmp_path / "pos.fa", tmp_path / "neg.fa"
+    pos.write_text("".join(
+        f">p{i}\n{rand(30)}{site if i % 3 == 0 else rand(len(site))}{rand(30)}\n"
+        for i in range(300)))
+    neg.write_text("".join(f">n{i}\n{rand(60 + len(site))}\n" for i in range(300)))
+    pwm = damo(str(pos), str(neg), JASPAR, iterations=100)
+
+    # Recompute the AUC of the returned PWM, forward and reverse strands
+    def best(path):
+        seqs = [str(r.seq).upper() for r in read_sequences(path)]
+        both = seqs + [str(Seq(x).reverse_complement()) for x in seqs]
+        model = _get_pwm_model(pwm, len(seqs[0]))
+        scores, _ = _score_sequences(model, torch.Tensor(dna_one_hot_many(both).tolist()),
+                                     both, pwm.shape[1])
+        return scores
+
+    expected = _compute_auc(best(str(pos)), best(str(neg)))[0]
+    reported = float(capsys.readouterr().out.split(" to ")[-1].rstrip(".\n "))
+    assert abs(reported - expected) < 1e-9
