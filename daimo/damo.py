@@ -15,8 +15,8 @@ import torch
 from sklearn import metrics
 from tqdm import tqdm
 
-from cudamo.io import read_pwm, read_sequences
-from cudamo.sequence import dna_one_hot_many
+from daimo.io import read_pwm, read_sequences
+from daimo.sequence import dna_one_hot_many
 
 bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
 
@@ -29,14 +29,72 @@ WIDTH_TOLERANCE = 0.002
 VALIDATION_FRACTION = 0.2
 
 # Scale applied to the PWM before it is written as frequencies. The optimized
-# weights are large, so at 1 (DiMO's unscaled conversion) the columns are
-# nearly one-hot and the file loses the ranking of sites: on 154 IBIS motifs a
-# MEME round trip kept 0.692 AUC at scale 1 and 0.711 at 0.1 (PWM: 0.712).
+# weights are large (about -290 to +32 on the IRF4 example), so at 1 (DiMO's
+# unscaled conversion) the columns are nearly one-hot, and a rounded output file
+# loses the ranking of the non-top bases. 0.1 keeps it; the right value depends
+# on the spread of the weights.
 DEFAULT_SCALE = 0.1
 LEARNING_RATES = [1.0, 0.55, 0.1]
 
 
-def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
+def _parse_width_ranges(spec):
+    """
+    Parse a width list in the style of `cut -f`.
+
+    Items are separated by commas: N, N-M, -M (1 to M) and N- (N up to the
+    longest width the sequences allow).
+
+    Returns:
+        List of (first, last) tuples; last is None for an open-ended range.
+    """
+    ranges = []
+    for item in str(spec).split(","):
+        item = item.strip()
+        try:
+            if "-" in item:
+                first, _, last = item.partition("-")
+                if not first.strip() and not last.strip():
+                    raise ValueError
+                first = int(first) if first.strip() else 1
+                last = int(last) if last.strip() else None
+            else:
+                first = last = int(item)
+        except ValueError:
+            raise ValueError(
+                f"Invalid width {item!r} in {spec!r}: use N, N-M, -M or N-, "
+                "separated by commas") from None
+        if first < 1 or (last is not None and last < first):
+            raise ValueError(f"Invalid width range {item!r} in {spec!r}")
+        ranges.append((first, last))
+
+    return ranges
+
+
+def parse_widths(spec, maximum=None):
+    """
+    Expand a width list in the style of `cut -f`, e.g. "5-19", "8,10,12" or
+    "5-8,12,15-".
+
+    Args:
+        spec: The list, as a string.
+        maximum: Where an open-ended range (N-) stops.
+
+    Returns:
+        Sorted list of distinct widths.
+    """
+    widths = set()
+    for first, last in _parse_width_ranges(spec):
+        if last is None:
+            if maximum is None:
+                raise ValueError(f"{spec!r} has an open-ended range; "
+                                 "it needs a maximum width")
+            last = maximum
+        widths.update(range(first, last + 1))
+
+    return sorted(widths)
+
+
+def damo(positive_seqs_file, negative_seqs_file, motif_file,
          debugging=False, iterations=500, motif_name=None,
          widths=None, seed=1714):
     """
@@ -57,12 +115,14 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     Args:
         positive_seqs_file: FASTA file of positive sequences.
         negative_seqs_file: FASTA file of negative sequences.
-        jaspar_profile_file: JASPAR or MEME motif used as the seed PWM.
+        motif_file: JASPAR or MEME motif used as the seed PWM.
         debugging: If True, use only the first 1,000 sequences per file.
         iterations: Maximum number of optimization iterations.
         motif_name: Motif to use when a MEME file has several.
-        widths: Motif widths to try (None: only the seed's width, with no
-            held-out set). Widths longer than the sequences are skipped.
+        widths: Motif widths to try, as a list of ints or a string like
+            `cut -f` ("5-19", "8,10,12", "5-8,12,15-"; see parse_widths).
+            None: only the seed's width, with no held-out set. Widths longer
+            than the sequences are skipped.
         seed: Random seed of the held-out split (widths only).
 
     Returns:
@@ -75,7 +135,7 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     # Get sequences, and the seed PWM
     positive_records = read_sequences(positive_seqs_file, debugging)
     negative_records = read_sequences(negative_seqs_file, debugging)
-    pwm = read_pwm(jaspar_profile_file, motif_name)
+    pwm = read_pwm(motif_file, motif_name)
 
     if widths is None:
         positives = _encode(positive_records, device)
@@ -96,6 +156,8 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
 
     # Widths to try, as far as the sequences allow
     sequence_length = positives[1].shape[-1]
+    if isinstance(widths, str):
+        widths = parse_widths(widths, sequence_length)
     candidates = sorted({int(k) for k in widths} | {pwm.shape[1]})
     candidates = [k for k in candidates if 1 <= k <= sequence_length]
     if not candidates:

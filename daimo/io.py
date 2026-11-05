@@ -1,4 +1,4 @@
-"""Reading and writing the files cuDAMO uses."""
+"""Reading and writing the files daimo uses."""
 
 import gzip
 import os
@@ -38,7 +38,7 @@ def read_sequences(fasta_file, debugging=False):
     return sequences
 
 
-def read_pwm(jaspar_profile, motif_name=None):
+def read_pwm(motif_file, motif_name=None):
     """
     Read a JASPAR or MEME motif as a log PWM.
 
@@ -51,29 +51,29 @@ def read_pwm(jaspar_profile, motif_name=None):
     renormalizing, as DAMO does for the PFMs it builds.
 
     Args:
-        jaspar_profile: Path to a JASPAR or MEME file (plain or gzipped).
+        motif_file: Path to a JASPAR or MEME file (plain or gzipped).
         motif_name: Which motif to read from a MEME file with several. Not
             needed when the file has only one.
 
     Returns:
         Array of shape (4, motif length), rows A, C, G and T.
     """
-    return read_motif(jaspar_profile, motif_name)[1]
+    return read_motif(motif_file, motif_name)[1]
 
 
-def read_motif(jaspar_profile, motif_name=None):
+def read_motif(motif_file, motif_name=None):
     """
     Read a JASPAR or MEME motif as (name, log PWM); see read_pwm.
 
     The name is the JASPAR header (ID and name) or the MEME MOTIF line.
     """
-    if _is_meme(jaspar_profile):
-        return _read_meme_motif(jaspar_profile, motif_name)
+    if _is_meme(motif_file):
+        return _read_meme_motif(motif_file, motif_name)
 
-    handle = open_file(jaspar_profile)
+    handle = open_file(motif_file)
     m = motifs.read(handle, "jaspar")
     handle.close()
-    name = " ".join(x for x in (m.matrix_id, m.name) if x) or "cudamo"
+    name = " ".join(x for x in (m.matrix_id, m.name) if x) or "daimo"
     m.pseudocounts = motifs.jaspar.calculate_pseudocounts(m)
 
     pwm = []
@@ -130,7 +130,7 @@ def _read_meme_motif(meme_file, motif_name=None):
     return motif_name, np.log(ppm / ppm.sum(axis=0, keepdims=True))
 
 
-def write_jaspar(pfm, handle, name="cudamo"):
+def write_jaspar(pfm, handle, name="daimo"):
     """Write a (4, motif length) PFM of frequencies in JASPAR format."""
     handle.write(f">{name}\n")
     for nucleotide, row in zip("ACGT", pfm):
@@ -138,7 +138,7 @@ def write_jaspar(pfm, handle, name="cudamo"):
         handle.write(f"{nucleotide} [ {values} ]\n")
 
 
-def write_meme(pfm, handle, name="cudamo"):
+def write_meme(pfm, handle, name="daimo"):
     """
     Write a (4, motif length) PFM of frequencies as a MEME file.
 

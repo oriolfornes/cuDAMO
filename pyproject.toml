@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cudamo"
+name = "daimo"
 dynamic = ["version"]
-description = "A PyTorch implementation of DAMO that runs on CUDA GPUs when available"
+description = "daimo: a discriminative AI-powered motif optimizer, a PyTorch implementation of DiMO and DAMO that runs on GPUs"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10,<3.13"
@@ -23,10 +23,10 @@ dependencies = [
 test = ["pytest>=7"]
 
 [project.scripts]
-cudamo = "cudamo.cli:main"
+daimo = "daimo.cli:main"
 
 [tool.setuptools.dynamic]
-version = { attr = "cudamo.__version__" }
+version = { attr = "daimo.__version__" }
 
 [tool.setuptools.packages.find]
-include = ["cudamo*"]
+include = ["daimo*"]
