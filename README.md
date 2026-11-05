@@ -4,8 +4,6 @@
 
 The name comes from [DiMO](https://pubmed.ncbi.nlm.nih.gov/24369152/) and [DAMO](https://github.com/sx-ruan/DAMO), the two programs it builds on: the same perceptron-style update on a PWM, scored by AUC, run as a one-filter convolution so that a whole dataset is scored at once. See [How daimo differs from DiMO and DAMO](#how-daimo-differs-from-dimo-and-damo).
 
-daimo was called cuDAMO up to 1.0.0. The package, the import name and the command are now `daimo`; see [Coming from cuDAMO](#coming-from-cudamo).
-
 ## Install
 
 With [pixi](https://pixi.sh):
@@ -102,15 +100,6 @@ daimo implements DiMO's optimization on a mononucleotide PWM (which is also leve
 - **Same update, same learning rates.** The update uses the overlap zone between the first negative and the last positive, with learning rates 1, 0.55 and 0.1, and stops when none improves the AUC. The default of 500 iterations follows DAMO.py (the paper's default is 150 epochs).
 - **Seed pseudocounts.** The seed PWM gets Biopython's JASPAR pseudocounts, not DAMO's.
 - **Sequences.** All sequences in an input file must have the same length. Windows that overlap an `N` are scored with the `N` as zeros, not skipped.
-
-## Coming from cuDAMO
-
-Version 2.0.0 renames the package: `import cudamo` becomes `import daimo`, and the `cudamo` command becomes `daimo`. A few options changed too:
-
-- `--oformat jaspar|meme` and `--scale` replace the unreleased `--pfm` option.
-- `-w`/`--widths` are new, and so is MEME input.
-- The final AUC message now reports the AUC of the PWM that is returned, not of the last candidate tried.
-- Gzipped output files work.
 
 ## Tests
 
