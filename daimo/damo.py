@@ -21,10 +21,9 @@ from daimo.sequence import dna_one_hot_many
 bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
 
 
-# Motif width search: widths tried when none are given, how much held-out AUC
+# Motif width search: how much held-out AUC
 # a wider motif may lose against the best one before it is passed over, and
 # the fraction of sequences held out
-DEFAULT_WIDTHS = (8, 10, 12, 15, 17, 19)
 WIDTH_TOLERANCE = 0.002
 VALIDATION_FRACTION = 0.2
 
@@ -141,7 +140,7 @@ def damo(positive_seqs_file, negative_seqs_file, motif_file,
         positives = _encode(positive_records, device)
         negatives = _encode(negative_records, device)
         pwm, original_auc, auc = _optimize(pwm, positives, negatives,
-            iterations, device)
+            iterations, device, desc=f"Width {pwm.shape[1]}")
         print("\n" + f"AUC optimized from {original_auc} to {auc}." + "\n")
 
         return pwm

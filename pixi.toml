@@ -1,6 +1,6 @@
 [workspace]
 name = "daimo"
-version = "1.0.0"
+version = "1.0.1"
 description = "daimo: a discriminative AI-powered motif optimizer, a PyTorch implementation of DiMO and DAMO that runs on GPUs"
 channels = ["pytorch", "conda-forge"]
 platforms = [{ platform = "linux-64", cuda = "12" }, "osx-arm64"]
