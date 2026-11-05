@@ -4,7 +4,7 @@ import sys
 
 import click
 
-from cudamo.damo import damo, pwm_to_pfm
+from cudamo.damo import DEFAULT_WIDTHS, damo, pwm_to_pfm
 from cudamo.io import open_file, write_pfm, write_pwm
 
 CONTEXT_SETTINGS = {
@@ -44,10 +44,16 @@ CONTEXT_SETTINGS = {
 )
 @click.option(
     "-w", "--optimize-width",
-    help="Also optimize the motif width, as in DiMO: hold out 20% of the "
-         "sequences, optimize a motif padded to about 20 columns, and keep "
-         "the columns that raise the held-out AUC.",
+    help="Also optimize the motif width: try several widths (see --widths) "
+         "and keep the one that does best on held-out sequences.",
     is_flag=True,
+)
+@click.option(
+    "--widths",
+    help="Comma-separated widths to try; implies -w. "
+         f"[default: {','.join(map(str, DEFAULT_WIDTHS))}]",
+    callback=lambda ctx, param, value: None if value is None else [
+        int(k) for k in value.split(",")],
 )
 @click.option(
     "-m", "--motif",
@@ -74,10 +80,14 @@ def main(**args):
     read as energies (kT) and converted with a Boltzmann distribution, as
     in DiMO.
     """
+    widths = args["widths"]
+    if widths is None and args["optimize_width"]:
+        widths = list(DEFAULT_WIDTHS)
+
     pwm = damo(args["positive_seqs"], args["negative_seqs"],
         args["jaspar_profile"], args["debugging"],
         iterations=args["iterations"], motif_name=args["motif"],
-        optimize_width=args["optimize_width"])
+        widths=widths)
 
     if args["output_file"] is None:
         write_pwm(pwm, sys.stdout)

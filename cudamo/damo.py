@@ -2,8 +2,9 @@
 
 Level 1 of DAMO.py (https://github.com/sx-ruan/DAMO), which is DiMO
 (Patel and Stormo, 2014): a single PWM is refined so that the best site in
-each sequence separates positives from negatives. DiMO's width optimization
-is optional.
+each sequence separates positives from negatives. The motif can also be
+optimized at several widths, keeping the one that does best on held-out
+sequences.
 """
 
 import copy
@@ -20,17 +21,18 @@ from cudamo.sequence import dna_one_hot_many
 bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
 
 
-# Width optimization, as in DiMO (Patel and Stormo, 2014, section 2.6)
-EXTENDED_WIDTH = 20
-MIN_WIDTH = 6
-WIDTH_PENALTY = 0.003
+# Motif width search: widths tried when none are given, how much held-out AUC
+# a wider motif may lose against the best one before it is passed over, and
+# the fraction of sequences held out
+DEFAULT_WIDTHS = (8, 10, 12, 15, 17, 19)
+WIDTH_TOLERANCE = 0.002
 VALIDATION_FRACTION = 0.2
 LEARNING_RATES = [1.0, 0.55, 0.1]
 
 
 def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
          debugging=False, iterations=500, motif_name=None,
-         optimize_width=False, seed=1714):
+         widths=None, seed=1714):
     """
     Optimize a PWM to separate positive from negative sequences.
 
@@ -39,13 +41,12 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     the sites of negatives. It stops early when the AUC stops improving,
     or when the classes are perfectly separated.
 
-    With optimize_width, the width of the motif is optimized too, as in
-    DiMO. 20% of the sequences of each class are held out. The seed is
-    optimized on the other 80% and padded with uniform positions to about
-    20 columns, equally on both sides, and optimized again. The result
-    is cut to its central 6 columns, which are then restored one by one,
-    first on the 5' side and then on the 3' side, as long as each one
-    raises the AUC on the held-out sequences by at least 0.003.
+    With widths, the motif is optimized at each width and the best one is
+    kept. 20% of the sequences of each class are held out. For each width
+    the seed is cut to its most informative columns, or padded with
+    uniform ones, optimized on the other 80%, and scored on the held-out
+    sequences. The seed's own width is always tried. The smallest width
+    within 0.002 of the best held-out AUC wins.
 
     Args:
         positive_seqs_file: FASTA file of positive sequences.
@@ -54,12 +55,13 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
         debugging: If True, use only the first 1,000 sequences per file.
         iterations: Maximum number of optimization iterations.
         motif_name: Motif to use when a MEME file has several.
-        optimize_width: If True, optimize the motif width too.
-        seed: Random seed of the held-out split (optimize_width only).
+        widths: Motif widths to try (None: only the seed's width, with no
+            held-out set). Widths longer than the sequences are skipped.
+        seed: Random seed of the held-out split (widths only).
 
     Returns:
         Log PWM of shape (4, motif length), rows A, C, G and T. The
-        motif length is the seed's, unless optimize_width is set.
+        motif length is the seed's unless widths are given.
     """
 
     device = _get_device()
@@ -69,7 +71,7 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     negative_records = read_sequences(negative_seqs_file, debugging)
     pwm = read_pwm(jaspar_profile_file, motif_name)
 
-    if not optimize_width:
+    if widths is None:
         positives = _encode(positive_records, device)
         negatives = _encode(negative_records, device)
         pwm, original_auc, auc = _optimize(pwm, positives, negatives,
@@ -78,39 +80,36 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
 
         return pwm
 
-    # Hold out sequences to choose the width
+    # Hold out sequences to compare the widths
     positive_records, positive_val = _split(positive_records, seed)
     negative_records, negative_val = _split(negative_records, seed)
     positives = _encode(positive_records, device)
     negatives = _encode(negative_records, device)
     positives_val = _encode(positive_val, device)
     negatives_val = _encode(negative_val, device)
-    seed_width = pwm.shape[1]
 
-    # Optimize at the width of the seed, then pad and optimize again
-    optimized, _, _ = _optimize(pwm, positives, negatives, iterations,
-        device, desc="Seed")
-    extended, pad = _extend(optimized, positives[1].shape[-1])
-    if pad:
-        extended, _, _ = _optimize(extended, positives, negatives,
-            iterations, device, desc="Extended")
+    # Widths to try, as far as the sequences allow
+    sequence_length = positives[1].shape[-1]
+    candidates = sorted({int(k) for k in widths} | {pwm.shape[1]})
+    candidates = [k for k in candidates if 1 <= k <= sequence_length]
+    if not candidates:
+        raise ValueError(f"No width fits sequences of length {sequence_length}")
 
-    # Cut to the core, and restore columns while the held-out AUC allows it
-    def auc_of(start, end):
-        return _auc(extended[:, start:end], positives_val, negatives_val,
-            device)
+    # Optimize at each width
+    pwms, aucs = {}, {}
+    for k in candidates:
+        pwms[k], _, _ = _optimize(_resize(pwm, k), positives, negatives,
+            iterations, device, desc=f"Width {k}")
+        aucs[k] = _auc(pwms[k], positives_val, negatives_val, device)
+    best = _choose_width(aucs)
 
-    start, end, val_auc = _select_width(auc_of, extended.shape[1])
-    final = extended[:, start:end]
+    seed_auc = _auc(pwm, positives_val, negatives_val, device)
+    print("\n" + f"AUC on held-out sequences: seed {seed_auc}")
+    for k in candidates:
+        print(f"  width {k:>3}: {aucs[k]}" + ("  <- chosen" if k == best else ""))
+    print()
 
-    print("\n" + f"Width optimized from {seed_width} to {end - start}. "
-          f"AUC on held-out sequences: seed "
-          f"{_auc(pwm, positives_val, negatives_val, device)}, optimized at "
-          f"the seed width "
-          f"{_auc(optimized, positives_val, negatives_val, device)}, "
-          f"final {val_auc}." + "\n")
-
-    return final
+    return pwms[best]
 
 
 def _get_device():
@@ -246,61 +245,59 @@ def _split(records, seed, fraction=VALIDATION_FRACTION):
             [records[i] for i in sorted(held_out)])
 
 
-def _extend(pwm, sequence_length, target=EXTENDED_WIDTH):
+def _resize(pwm, width):
     """
-    Pad a PWM with uniform positions, equally on both sides.
+    Cut a PWM down to its most informative columns, or pad it.
 
-    The PWM grows to about the target width, as far as the sequences allow.
-    A PWM that is already as wide is returned unchanged.
-
-    Returns:
-        Tuple (pwm, pad): the padded PWM and the positions added per side.
-    """
-    pad = (min(target, sequence_length) - pwm.shape[1]) // 2
-    if pad <= 0:
-        return pwm, 0
-    uniform = np.full((4, pad), np.log(0.25))
-
-    return np.hstack([uniform, pwm, uniform]), pad
-
-
-def _select_width(auc_of, width, min_width=MIN_WIDTH, penalty=WIDTH_PENALTY):
-    """
-    Choose which columns of a wide PWM to keep.
-
-    Start from the central min_width columns and restore columns one at a
-    time, on the 5' side until one fails and then on the 3' side. A column
-    is kept only if the AUC rises by at least the penalty, which keeps the
-    motif from growing without a real gain.
+    A narrower width keeps the run of columns with the most information
+    (ties go to the most central run). A wider one adds uniform columns,
+    half on each side (the odd one on the right).
 
     Args:
-        auc_of: Function (start, end) returning the held-out AUC of the
-            columns start to end - 1.
-        width: Width of the PWM.
-        min_width: Width of the starting core.
-        penalty: Minimum AUC gain to keep a restored column.
+        pwm: Log PWM of shape (4, motif length).
+        width: Wanted number of columns.
 
     Returns:
-        Tuple (start, end, auc) of the columns kept and their AUC.
+        Log PWM of shape (4, width).
     """
-    core = min(min_width, width)
-    start = (width - core) // 2
-    end = start + core
-    best = auc_of(start, end)
+    motif_length = pwm.shape[1]
+    if width == motif_length:
+        return pwm
 
-    while start > 0:
-        candidate = auc_of(start - 1, end)
-        if candidate - best < penalty - 1e-12:
-            break
-        start, best = start - 1, candidate
+    if width > motif_length:
+        left = (width - motif_length) // 2
+        right = width - motif_length - left
+        return np.hstack([np.full((4, left), np.log(0.25)), pwm,
+                          np.full((4, right), np.log(0.25))])
 
-    while end < width:
-        candidate = auc_of(start, end + 1)
-        if candidate - best < penalty - 1e-12:
-            break
-        end, best = end + 1, candidate
+    # Information content of each column, in bits
+    pfm = pwm_to_pfm(pwm)
+    information = (pfm * np.log2(pfm / 0.25)).sum(axis=0)
+    totals = np.convolve(information, np.ones(width), mode="valid")
+    centre = (motif_length - width) / 2
+    start = min(range(len(totals)), key=lambda i: (-round(totals[i], 9),
+                                                    abs(i - centre)))
 
-    return start, end, best
+    return pwm[:, start:start + width]
+
+
+def _choose_width(aucs, tolerance=WIDTH_TOLERANCE):
+    """
+    Pick a width from the held-out AUC of each.
+
+    The smallest width within the tolerance of the best AUC wins, so extra
+    columns have to pay for themselves.
+
+    Args:
+        aucs: Dict mapping width to held-out AUC.
+        tolerance: Held-out AUC a narrower motif may lose against the best.
+
+    Returns:
+        The chosen width.
+    """
+    best = max(aucs.values())
+
+    return min(k for k, auc in aucs.items() if auc >= best - tolerance - 1e-12)
 
 
 def pwm_to_pfm(pwm, scale=1.0):
