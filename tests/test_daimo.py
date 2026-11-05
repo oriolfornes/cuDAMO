@@ -1,4 +1,4 @@
-"""Checks that cuDAMO follows DAMO.py (https://github.com/sx-ruan/DAMO).
+"""Checks that daimo follows DAMO.py (https://github.com/sx-ruan/DAMO).
 
     pixi run test
 """
@@ -15,13 +15,13 @@ from click.testing import CliRunner
 
 import pytest
 
-from cudamo import cli
-from cudamo.io import read_pwm
-from cudamo.damo import (_compute_auc, _generate_pwm, _get_pwm_model,
+from daimo import cli
+from daimo.io import read_pwm
+from daimo.damo import (_compute_auc, _generate_pwm, _get_pwm_model,
                          _score_sequences, _update_pwm, damo, pwm_to_pfm)
-from cudamo.damo import _choose_width, _resize, _split
-from cudamo.io import read_sequences
-from cudamo.sequence import dna_one_hot, dna_one_hot_many
+from daimo.damo import _choose_width, _resize, _split, parse_widths
+from daimo.io import read_sequences
+from daimo.sequence import dna_one_hot, dna_one_hot_many
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JASPAR = os.path.join(ROOT, "examples", "MA1419.1.jaspar")
@@ -321,4 +321,50 @@ def test_width_options_reach_damo(monkeypatch, tmp_path):
     CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-w", "-o", out])
     assert seen["widths"] == [8, 10, 12, 15, 17, 19]
     CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", "6,9", "-o", out])
-    assert seen["widths"] == [6, 9]
+    assert seen["widths"] == "6,9"
+    CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", "5-19", "-o", out])
+    assert seen["widths"] == "5-19"
+
+
+def test_widths_syntax_errors_are_usage_errors(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "damo", lambda *a, **k: np.zeros((4, 2)))
+    fa = os.path.join(ROOT, "examples", "positive_seqs.fa.gz")
+    for bad in ("19-5", "x", "0", "-", "8,,10"):
+        res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", bad])
+        assert res.exit_code == 2 and "Invalid width" in res.output, bad
+
+
+def test_parse_widths_like_cut():
+    assert parse_widths("5-19") == list(range(5, 20))
+    assert parse_widths("8,10,12") == [8, 10, 12]
+    assert parse_widths("12,8,10,8") == [8, 10, 12]
+    assert parse_widths(" 8 , 10-12 ") == [8, 10, 11, 12]
+    assert parse_widths("-4") == [1, 2, 3, 4]
+    assert parse_widths("5-8,12,15-", maximum=17) == [5, 6, 7, 8, 12, 15, 16, 17]
+    assert parse_widths("5-8,6-10") == [5, 6, 7, 8, 9, 10]
+    assert parse_widths("7") == [7]
+
+
+def test_parse_widths_rejects_bad_input():
+    for bad in ("", "a", "19-5", "0", "-", "5--7", "8,,10", "1.5", "0-3"):
+        with pytest.raises(ValueError, match="Invalid width"):
+            parse_widths(bad)
+    with pytest.raises(ValueError, match="open-ended"):
+        parse_widths("5-")
+
+
+def test_widths_string_reaches_the_search(tmp_path, capsys):
+    with open(JASPAR) as f:
+        site = str(motifs.read(f, "jaspar").consensus)[3:12]
+    rng = random.Random(1714)
+    rand = lambda n: "".join(rng.choice("ACGT") for _ in range(n))  # noqa: E731
+    pos, neg = tmp_path / "pos.fa", tmp_path / "neg.fa"
+    pos.write_text("".join(f">p{i}\n{rand(40)}{site}{rand(40)}\n" for i in range(100)))
+    neg.write_text("".join(f">n{i}\n{rand(89)}\n" for i in range(100)))
+    # open-ended: 14 up to the sequence length; here 14 and the seed's 15, up to 89,
+    # so cap it with a range to keep the run short
+    pwm = damo(str(pos), str(neg), JASPAR, iterations=5, widths="5-7,15")
+    out = capsys.readouterr().out
+    for k in (5, 6, 7, 15):
+        assert f"width {k:>3}:" in out
+    assert "width   8" not in out and pwm.shape[1] in (5, 6, 7, 15)

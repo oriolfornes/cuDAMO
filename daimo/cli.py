@@ -4,13 +4,25 @@ import sys
 
 import click
 
-from cudamo.damo import DEFAULT_SCALE, DEFAULT_WIDTHS, damo, pwm_to_pfm
-from cudamo.io import (open_file, read_motif, write_jaspar, write_meme,
+from daimo.damo import (DEFAULT_SCALE, DEFAULT_WIDTHS, _parse_width_ranges,
+                        damo, pwm_to_pfm)
+from daimo.io import (open_file, read_motif, write_jaspar, write_meme,
                        write_pwm)
 
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
 }
+
+
+def _check_widths(value):
+    """Validate the syntax of --widths; open-ended ranges are expanded later."""
+    if value is not None:
+        try:
+            _parse_width_ranges(value)
+        except ValueError as e:
+            raise click.BadParameter(str(e)) from None
+
+    return value
 
 
 @click.command(no_args_is_help=True, context_settings=CONTEXT_SETTINGS)
@@ -23,7 +35,7 @@ CONTEXT_SETTINGS = {
     type=click.Path(exists=True, resolve_path=True),
 )
 @click.argument(
-    "jaspar_profile",
+    "seed_motif",
     type=click.Path(exists=True, resolve_path=True),
 )
 @click.option(
@@ -51,10 +63,11 @@ CONTEXT_SETTINGS = {
 )
 @click.option(
     "--widths",
-    help="Comma-separated widths to try; implies -w. "
+    help="Widths to try, as a list in the style of cut -f: 8,10,12 or 5-19 or "
+         "5-8,12,15- (-M is 1 to M, N- is N up to the sequence length). "
+         "Implies -w. "
          f"[default: {','.join(map(str, DEFAULT_WIDTHS))}]",
-    callback=lambda ctx, param, value: None if value is None else [
-        int(k) for k in value.split(",")],
+    callback=lambda ctx, param, value: _check_widths(value),
 )
 @click.option(
     "-m", "--motif",
@@ -97,7 +110,7 @@ def main(**args):
         widths = list(DEFAULT_WIDTHS)
 
     pwm = damo(args["positive_seqs"], args["negative_seqs"],
-        args["jaspar_profile"], args["debugging"],
+        args["seed_motif"], args["debugging"],
         iterations=args["iterations"], motif_name=args["motif"],
         widths=widths)
 
@@ -105,7 +118,7 @@ def main(**args):
         def write(handle):
             write_pwm(pwm, handle)
     else:
-        name, _ = read_motif(args["jaspar_profile"], args["motif"])
+        name, _ = read_motif(args["seed_motif"], args["motif"])
         scale = DEFAULT_SCALE if args["scale"] is None else args["scale"]
         pfm = pwm_to_pfm(pwm, scale)
         writer = write_jaspar if args["oformat"] == "jaspar" else write_meme
