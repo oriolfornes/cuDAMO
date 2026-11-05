@@ -5,7 +5,8 @@ import sys
 import click
 
 from cudamo.damo import DEFAULT_WIDTHS, damo, pwm_to_pfm
-from cudamo.io import open_file, write_pfm, write_pwm
+from cudamo.io import (open_file, read_motif, write_jaspar, write_meme,
+                       write_pwm)
 
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
@@ -60,26 +61,33 @@ CONTEXT_SETTINGS = {
     help="Motif to use when the MEME file has several (name, or its ID).",
 )
 @click.option(
-    "--pfm",
-    help="Also write a PFM (JASPAR format, frequencies) to this file.",
-    type=click.Path(resolve_path=True),
+    "--oformat",
+    help="Output format: the log PWM (one line per position, A C G T), or "
+         "the motif as frequencies in JASPAR or MEME format.",
+    type=click.Choice(["pwm", "jaspar", "meme"]),
+    default="pwm",
+    show_default=True,
 )
 @click.option(
     "--scale",
-    help="Factor applied to the PWM before converting it to a PFM; "
-         "above 1 sharpens the columns, below 1 flattens them.",
+    help="With --oformat jaspar or meme: factor applied to the PWM before "
+         "converting it to frequencies; above 1 sharpens the columns, "
+         "below 1 flattens them. [default: 1]",
     type=click.FloatRange(min=0, min_open=True),
-    default=1.0,
-    show_default=True,
 )
 def main(**args):
     """Optimize a JASPAR or MEME motif to separate positive from negative sequences.
 
-    The log PWM is written with one line per position and four columns
-    (A, C, G, T). With --pfm, a PFM is written too: the PWM weights are
-    read as energies (kT) and converted with a Boltzmann distribution, as
-    in DiMO.
+    The input format is detected from the file. The output is the log PWM
+    by default, with one line per position and four columns (A, C, G, T).
+    With --oformat jaspar or meme it is a motif of frequencies instead: the
+    PWM weights are read as energies (kT) and converted with a Boltzmann
+    distribution, as in DiMO.
     """
+    if args["scale"] is not None and args["oformat"] == "pwm":
+        raise click.UsageError(
+            "--scale only applies with --oformat jaspar or meme")
+
     widths = args["widths"]
     if widths is None and args["optimize_width"]:
         widths = list(DEFAULT_WIDTHS)
@@ -89,13 +97,19 @@ def main(**args):
         iterations=args["iterations"], motif_name=args["motif"],
         widths=widths)
 
+    if args["oformat"] == "pwm":
+        def write(handle):
+            write_pwm(pwm, handle)
+    else:
+        name, _ = read_motif(args["jaspar_profile"], args["motif"])
+        pfm = pwm_to_pfm(pwm, args["scale"] or 1.0)
+        writer = write_jaspar if args["oformat"] == "jaspar" else write_meme
+
+        def write(handle):
+            writer(pfm, handle, name)
+
     if args["output_file"] is None:
-        write_pwm(pwm, sys.stdout)
+        write(sys.stdout)
     else:
         with open_file(args["output_file"], "w") as handle:
-            write_pwm(pwm, handle)
-
-    if args["pfm"] is not None:
-        with open_file(args["pfm"], "w") as handle:
-            write_pfm(pwm_to_pfm(pwm, args["scale"]), handle)
-
+            write(handle)

@@ -58,19 +58,29 @@ def read_pwm(jaspar_profile, motif_name=None):
     Returns:
         Array of shape (4, motif length), rows A, C, G and T.
     """
+    return read_motif(jaspar_profile, motif_name)[1]
+
+
+def read_motif(jaspar_profile, motif_name=None):
+    """
+    Read a JASPAR or MEME motif as (name, log PWM); see read_pwm.
+
+    The name is the JASPAR header (ID and name) or the MEME MOTIF line.
+    """
     if _is_meme(jaspar_profile):
-        return _read_meme_pwm(jaspar_profile, motif_name)
+        return _read_meme_motif(jaspar_profile, motif_name)
 
     handle = open_file(jaspar_profile)
     m = motifs.read(handle, "jaspar")
     handle.close()
+    name = " ".join(x for x in (m.matrix_id, m.name) if x) or "cudamo"
     m.pseudocounts = motifs.jaspar.calculate_pseudocounts(m)
 
     pwm = []
     for nucleotide in "ACGT":
         pwm.append([i for i in m.pwm[nucleotide]])
 
-    return np.log(pwm)
+    return name, np.log(pwm)
 
 
 def _is_meme(file_name):
@@ -82,8 +92,8 @@ def _is_meme(file_name):
     return False
 
 
-def _read_meme_pwm(meme_file, motif_name=None):
-    """Read one motif of a MEME file as a log PWM (see read_pwm)."""
+def _read_meme_motif(meme_file, motif_name=None):
+    """Read one motif of a MEME file as (name, log PWM); see read_pwm."""
     from memelite.io import read_meme
 
     # memelite opens plain text only
@@ -117,15 +127,33 @@ def _read_meme_pwm(meme_file, motif_name=None):
 
     ppm = np.asarray(ppms[motif_name], float) + 1e-4
 
-    return np.log(ppm / ppm.sum(axis=0, keepdims=True))
+    return motif_name, np.log(ppm / ppm.sum(axis=0, keepdims=True))
 
 
-def write_pfm(pfm, handle, name="cudamo"):
+def write_jaspar(pfm, handle, name="cudamo"):
     """Write a (4, motif length) PFM of frequencies in JASPAR format."""
     handle.write(f">{name}\n")
     for nucleotide, row in zip("ACGT", pfm):
         values = " ".join(f"{r:.6f}" for r in row.tolist())
         handle.write(f"{nucleotide} [ {values} ]\n")
+
+
+def write_meme(pfm, handle, name="cudamo"):
+    """
+    Write a (4, motif length) PFM of frequencies as a MEME file.
+
+    Laid out as ExplaiNN-2 writes MEME, so the two read each other's files.
+    nsites is a placeholder: the frequencies are not counts.
+    """
+    handle.write("MEME version 4\n\nALPHABET= ACGT\n\nstrands: + -\n\n")
+    handle.write("Background letter frequencies (from uniform background):\n"
+                 "A 0.25000 C 0.25000 G 0.25000 T 0.25000\n\n")
+    handle.write(f"MOTIF {name}\n")
+    handle.write(f"letter-probability matrix: alength= 4 "
+                 f"w= {pfm.shape[1]} nsites= 1 E= 0\n")
+    for column in pfm.T:
+        handle.write(" ".join(f"{v:>9.6f}" for v in column) + "\n")
+    handle.write("URL BLANK\n\n")
 
 
 def write_pwm(pwm, handle):

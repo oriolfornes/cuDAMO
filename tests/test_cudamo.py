@@ -72,15 +72,60 @@ def test_pfm_scale_sharpens_and_flattens():
     assert pwm_to_pfm(pwm, 2.)[0, 0] > pwm_to_pfm(pwm)[0, 0] > pwm_to_pfm(pwm, .5)[0, 0]
 
 
-def test_pfm_option_writes_readable_jaspar(monkeypatch, tmp_path):
-    monkeypatch.setattr(cli, "damo", lambda *a, **k: np.log(np.full((4, 3), .25)))
+def _run(monkeypatch, tmp_path, args, pwm=None):
+    pwm = np.log(np.full((4, 3), .25)) if pwm is None else pwm
+    monkeypatch.setattr(cli, "damo", lambda *a, **k: pwm)
     fa = os.path.join(ROOT, "examples", "positive_seqs.fa.gz")
-    out = tmp_path / "motif.pfm.gz"
-    res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--pfm", str(out), "--scale", "2"])
+    return CliRunner().invoke(cli.main, [fa, fa, JASPAR] + args)
+
+
+def test_oformat_jaspar_is_readable_and_keeps_the_name(monkeypatch, tmp_path):
+    out = tmp_path / "motif.jaspar.gz"
+    res = _run(monkeypatch, tmp_path, ["--oformat", "jaspar", "--scale", "2", "-o", str(out)])
     assert res.exit_code == 0, res.output
     with gzip.open(out, "rt") as f:
         m = motifs.read(f, "jaspar")
     np.testing.assert_allclose([m.counts[b] for b in "ACGT"], .25)
+    assert (m.matrix_id, m.name) == ("MA1419.1", "IRF4")
+
+
+def test_oformat_meme_round_trips(monkeypatch, tmp_path):
+    pwm = np.log(np.array([[.7, .1], [.1, .2], [.1, .3], [.1, .4]]))
+    out = tmp_path / "motif.meme"
+    res = _run(monkeypatch, tmp_path, ["--oformat", "meme", "-o", str(out)], pwm)
+    assert res.exit_code == 0, res.output
+    assert "MOTIF MA1419.1 IRF4" in out.read_text()
+    back = read_pwm(str(out))
+    # read as probabilities: 1e-4 added and renormalized
+    expected = np.exp(pwm) + 1e-4
+    np.testing.assert_allclose(np.exp(back), expected / expected.sum(axis=0), atol=1e-6)
+
+
+def test_oformat_defaults_to_the_log_pwm(monkeypatch, tmp_path):
+    pwm = np.log(np.array([[.7, .1], [.1, .2], [.1, .3], [.1, .4]]))
+    out = tmp_path / "motif.txt"
+    assert _run(monkeypatch, tmp_path, ["-o", str(out)], pwm).exit_code == 0
+    np.testing.assert_allclose(np.loadtxt(out).T, pwm, atol=1e-8)
+
+
+def test_oformat_writes_to_stdout(monkeypatch, tmp_path):
+    res = _run(monkeypatch, tmp_path, ["--oformat", "meme"])
+    assert res.exit_code == 0 and res.output.startswith("MEME version 4")
+
+
+def test_scale_needs_a_frequency_format(monkeypatch, tmp_path):
+    res = _run(monkeypatch, tmp_path, ["--scale", "2", "-o", str(tmp_path / "o.txt")])
+    assert res.exit_code != 0 and "--oformat" in res.output
+
+
+def test_meme_input_name_is_kept_in_the_output(monkeypatch, tmp_path):
+    meme = tmp_path / "in.meme"
+    meme.write_text(MEME)
+    monkeypatch.setattr(cli, "damo", lambda *a, **k: np.log(np.full((4, 2), .25)))
+    fa = os.path.join(ROOT, "examples", "positive_seqs.fa.gz")
+    res = CliRunner().invoke(cli.main, [fa, fa, str(meme), "-m", "MA0002.1", "--oformat", "jaspar"])
+    assert res.exit_code == 0, res.output
+    assert res.output.startswith(">MA0002.1 second")
 
 
 MEME = """MEME version 4
