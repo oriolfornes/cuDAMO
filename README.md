@@ -33,7 +33,7 @@ Options:
 - `-o, --output-file`: where to write the motif (`.gz` to compress). Without it, it goes to stdout.
 - `--oformat`: `pwm` (default), `jaspar` or `meme`. See [Output formats](#output-formats).
 - `-d, --debugging`: use only the first 1,000 sequences of each file.
-- `--widths`: the widths to try, as a list in the style of `cut -f` (`8,10,12`, `5-19`, `5-8,12,15-`); default: the width of the seed (see [Motif width](#motif-width)).
+- `-w, --widths`: the widths to try, as a list in the style of `cut -f` (`8,10,12`, `5-19`, `5-8,12,15-`); default: the width of the seed (see [Motif width](#motif-width)).
 - `-m, --motif`: which motif to use when a MEME file has several, by name or by ID (e.g. `MA1419.1`). Not needed for single-motif files. MEME matrices are probabilities, so 1e-4 is added and the columns renormalized before taking the log, as DAMO does for the PFMs it builds.
 - `--scale`: with `--oformat jaspar` or `meme`, a factor applied to the PWM before converting it to frequencies (default 0.1). See below.
 
@@ -62,12 +62,12 @@ The optimized weights are large (about -290 to +32 on the IRF4 example), so the 
 By default the motif keeps the width of the seed. You choose which widths to explore, and daimo picks the best one:
 
 ```bash
-pixi run daimo pos.fa.gz neg.fa.gz motif.jaspar --widths 5-19 -o motif.pwm.txt       # every width from 5 to 19
-pixi run daimo pos.fa.gz neg.fa.gz motif.jaspar --widths 8,10,12 -o motif.pwm.txt
-pixi run daimo pos.fa.gz neg.fa.gz motif.jaspar --widths 5-8,12,15- -o motif.pwm.txt
+pixi run daimo pos.fa.gz neg.fa.gz motif.jaspar -w 5-19 -o motif.pwm.txt       # every width from 5 to 19
+pixi run daimo pos.fa.gz neg.fa.gz motif.jaspar -w 8,10,12 -o motif.pwm.txt
+pixi run daimo pos.fa.gz neg.fa.gz motif.jaspar -w 5-8,12,15- -o motif.pwm.txt
 ```
 
-`--widths` takes a list like `cut -f`: `N`, `N-M`, `-M` (1 to M) and `N-` (N up to the sequence length), separated by commas.
+`-w, --widths` takes a list like `cut -f`: `N`, `N-M`, `-M` (1 to M) and `N-` (N up to the sequence length), separated by commas.
 
 - 20% of the sequences of each class are held out (fixed seed).
 - For each width the seed is cut to its most informative run of columns (the highest total information content), or padded with uniform columns (half on each side), and optimized on the other 80%. The seed's own width is always tried too. Widths longer than the sequences are skipped.

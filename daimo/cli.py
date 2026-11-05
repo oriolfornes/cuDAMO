@@ -56,9 +56,11 @@ def _check_widths(value):
     type=click.Path(resolve_path=True),
 )
 @click.option(
-    "--widths",
-    help="Widths to try, as a list in the style of cut -f: 8,10,12 or 5-19 or "
-         "5-8,12,15- (-M is 1 to M, N- is N up to the sequence length). "
+    "-w", "--widths",
+    help="Optimize the motif width: try several widths, given as a list in "
+         "the style of cut -f (8,10,12 or 5-19 or 5-8,12,15-; -M is 1 to M, "
+         "N- is N up to the sequence length), and keep the one that does "
+         "best on held-out sequences. "
          "[default: the width of the seed motif]",
     callback=lambda ctx, param, value: _check_widths(value),
 )

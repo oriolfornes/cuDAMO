@@ -318,9 +318,9 @@ def test_width_options_reach_damo(monkeypatch, tmp_path):
     out = str(tmp_path / "o.txt")
     CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-o", out])
     assert seen["widths"] is None
-    CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", "6,9", "-o", out])
+    CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-w", "6,9", "-o", out])
     assert seen["widths"] == "6,9"
-    CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", "5-19", "-o", out])
+    CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-w", "5-19", "-o", out])
     assert seen["widths"] == "5-19"
 
 
@@ -328,7 +328,7 @@ def test_widths_syntax_errors_are_usage_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "damo", lambda *a, **k: np.zeros((4, 2)))
     fa = os.path.join(ROOT, "examples", "positive_seqs.fa.gz")
     for bad in ("19-5", "x", "0", "-", "8,,10"):
-        res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--widths", bad])
+        res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-w", bad])
         assert res.exit_code == 2 and "Invalid width" in res.output, bad
 
 
