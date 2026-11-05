@@ -43,6 +43,13 @@ CONTEXT_SETTINGS = {
     type=click.Path(resolve_path=True),
 )
 @click.option(
+    "-w", "--optimize-width",
+    help="Also optimize the motif width, as in DiMO: hold out 20% of the "
+         "sequences, optimize a motif padded to about 20 columns, and keep "
+         "the columns that raise the held-out AUC.",
+    is_flag=True,
+)
+@click.option(
     "-m", "--motif",
     help="Motif to use when the MEME file has several (name, or its ID).",
 )
@@ -69,7 +76,8 @@ def main(**args):
     """
     pwm = damo(args["positive_seqs"], args["negative_seqs"],
         args["jaspar_profile"], args["debugging"],
-        iterations=args["iterations"], motif_name=args["motif"])
+        iterations=args["iterations"], motif_name=args["motif"],
+        optimize_width=args["optimize_width"])
 
     if args["output_file"] is None:
         write_pwm(pwm, sys.stdout)
