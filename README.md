@@ -23,13 +23,16 @@ pip install -e .
 pixi run cudamo positive_seqs.fa.gz negative_seqs.fa.gz motif.jaspar -o motif.pwm.txt
 ```
 
-Inputs are a FASTA file of positives, a FASTA file of negatives and a JASPAR matrix to start from. Plain or gzipped files both work.
+Inputs are a FASTA file of positives, a FASTA file of negatives and a motif to start from, as a JASPAR matrix or a MEME file (detected from the content). Plain or gzipped files both work.
 
 Options:
 
 - `-i, --iterations`: maximum number of iterations (default 500).
 - `-o, --output-file`: where to write the PWM. Without it, the PWM goes to stdout.
 - `-d, --debugging`: use only the first 1,000 sequences of each file.
+- `-m, --motif`: which motif to use when a MEME file has several, by name or by ID (e.g. `MA1419.1`). Not needed for single-motif files. MEME matrices are probabilities, so 1e-4 is added and the columns renormalized before taking the log, as DAMO does for the PFMs it builds.
+- `--pfm`: also write a PFM (JASPAR format, frequencies) to this file. The PWM weights are read as energies in kT and converted with a Boltzmann distribution (a softmax over A, C, G and T at each position), as in [DiMO](https://pubmed.ncbi.nlm.nih.gov/24369152/).
+- `--scale`: factor applied to the PWM before that conversion (default 1). Above 1 sharpens the columns, below 1 flattens them. The weights are discriminative scores, not probabilities, so the PFM at scale 1 is not guaranteed to look like a typical binding-site PFM.
 
 The output is the log PWM, one line per motif position with four columns (A, C, G, T). The `AUC optimized from ... to ...` line is printed to stdout too, so use `-o` to keep the matrix on its own.
 

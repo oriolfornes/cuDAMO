@@ -20,7 +20,7 @@ bar_format = "{percentage:3.0f}%|{bar:20}{r_bar}"
 
 
 def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
-         debugging=False, iterations=500):
+         debugging=False, iterations=500, motif_name=None):
     """
     Optimize a PWM to separate positive from negative sequences.
 
@@ -32,9 +32,10 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     Args:
         positive_seqs_file: FASTA file of positive sequences.
         negative_seqs_file: FASTA file of negative sequences.
-        jaspar_profile_file: JASPAR matrix used as the seed PWM.
+        jaspar_profile_file: JASPAR or MEME motif used as the seed PWM.
         debugging: If True, use only the first 1,000 sequences per file.
         iterations: Maximum number of optimization iterations.
+        motif_name: Motif to use when a MEME file has several.
 
     Returns:
         Log PWM of shape (4, motif length), rows A, C, G and T.
@@ -65,7 +66,7 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     negative_seqs_tensor = torch.Tensor(negative_1he_seqs.tolist()).to(device)
 
     # Get PWM
-    pwm = read_pwm(jaspar_profile_file)
+    pwm = read_pwm(jaspar_profile_file, motif_name)
 
     # Get a PyTorch model of the PWM
     model = _get_pwm_model(pwm, positive_1he_seqs.shape[-1], device)
@@ -130,6 +131,27 @@ def damo(positive_seqs_file, negative_seqs_file, jaspar_profile_file,
     print("\n" + f"AUC optimized from {original_auc} to {auc}." + "\n")
 
     return pwm
+
+
+def pwm_to_pfm(pwm, scale=1.0):
+    """
+    Convert a log PWM to a PFM with a Boltzmann distribution.
+
+    As in DiMO (Patel and Stormo, 2014), the weights are read as energies
+    in units of kT: each position is a softmax over A, C, G and T. A scale
+    above 1 sharpens the columns and one below 1 flattens them.
+
+    Args:
+        pwm: Log PWM of shape (4, motif length), rows A, C, G and T.
+        scale: Factor applied to the weights before the softmax.
+
+    Returns:
+        Frequencies of shape (4, motif length); each column sums to 1.
+    """
+    scaled = scale * np.asarray(pwm, float)
+    z = np.exp(scaled - scaled.max(axis=0, keepdims=True))
+
+    return z / z.sum(axis=0, keepdims=True)
 
 
 def _get_pwm_model(pwm, sequence_length, device="cpu"):

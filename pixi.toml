@@ -40,3 +40,6 @@ cpu = { features = ["cpu"], solve-group = "cpu" }
 cudamo = { cmd = "python -m cudamo", description = "Run cuDAMO (pass the usual arguments)" }
 test = { cmd = "python -m pytest tests/ -q", description = "Run the tests" }
 example = { cmd = "mkdir -p results && python -m cudamo examples/positive_seqs.fa.gz examples/negative_seqs.fa.gz examples/MA1419.1.jaspar -o results/MA1419.1.pwm.txt", description = "Optimize the MA1419.1 example motif" }
+
+[pypi-dependencies]
+memelite = ">=0.4"

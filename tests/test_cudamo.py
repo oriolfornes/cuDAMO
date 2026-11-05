@@ -3,6 +3,7 @@
     pixi run test
 """
 
+import gzip
 import os
 import random
 
@@ -10,8 +11,11 @@ import numpy as np
 from Bio import motifs
 from click.testing import CliRunner
 
+import pytest
+
 from cudamo import cli
-from cudamo.damo import _generate_pwm, _update_pwm, damo
+from cudamo.io import read_pwm
+from cudamo.damo import _generate_pwm, _update_pwm, damo, pwm_to_pfm
 from cudamo.sequence import dna_one_hot
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,6 +50,97 @@ def test_iterations_option_reaches_damo(monkeypatch, tmp_path):
     res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-i", "3", "-o", str(tmp_path / "out.txt")])
     assert res.exit_code == 0, res.output
     assert seen["iterations"] == 3
+
+
+def test_pfm_is_boltzmann_distribution():
+    pwm = np.log(np.array([[.7, .1], [.1, .2], [.1, .3], [.1, .4]]))
+    # exp(W) normalized per column; a log PWM that is already a
+    # distribution comes back unchanged
+    np.testing.assert_allclose(pwm_to_pfm(pwm), np.exp(pwm))
+    np.testing.assert_allclose(pwm_to_pfm(pwm).sum(axis=0), 1.)
+    # no overflow on large weights
+    assert np.isfinite(pwm_to_pfm(pwm * 1e4)).all()
+
+
+def test_pfm_scale_sharpens_and_flattens():
+    pwm = np.log(np.array([[.7], [.1], [.1], [.1]]))
+    assert pwm_to_pfm(pwm, 2.)[0, 0] > pwm_to_pfm(pwm)[0, 0] > pwm_to_pfm(pwm, .5)[0, 0]
+
+
+def test_pfm_option_writes_readable_jaspar(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "damo", lambda *a, **k: np.log(np.full((4, 3), .25)))
+    fa = os.path.join(ROOT, "examples", "positive_seqs.fa.gz")
+    out = tmp_path / "motif.pfm.gz"
+    res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "--pfm", str(out), "--scale", "2"])
+    assert res.exit_code == 0, res.output
+    with gzip.open(out, "rt") as f:
+        m = motifs.read(f, "jaspar")
+    np.testing.assert_allclose([m.counts[b] for b in "ACGT"], .25)
+
+
+MEME = """MEME version 4
+
+ALPHABET= ACGT
+
+strands: + -
+
+Background letter frequencies
+A 0.25 C 0.25 G 0.25 T 0.25
+
+MOTIF MA0001.1 first
+letter-probability matrix: alength= 4 w= 2 nsites= 20 E= 0
+  0.700000  0.100000  0.100000  0.100000
+  0.100000  0.100000  0.100000  0.700000
+
+MOTIF MA0002.1 second
+letter-probability matrix: alength= 4 w= 3 nsites= 20 E= 0
+  0.250000  0.250000  0.250000  0.250000
+  0.250000  0.250000  0.250000  0.250000
+  0.250000  0.250000  0.250000  0.250000
+"""
+
+
+def test_read_meme_motif_by_name_or_id(tmp_path):
+    meme = tmp_path / "motifs.meme"
+    meme.write_text(MEME)
+    for name in ("MA0001.1 first", "MA0001.1"):
+        pwm = read_pwm(str(meme), name)
+        assert pwm.shape == (4, 2)
+        # probabilities, with 1e-4 added and renormalized
+        expected = np.array([[.7, .1], [.1, .1], [.1, .1], [.1, .7]]) + 1e-4
+        np.testing.assert_allclose(pwm, np.log(expected / expected.sum(axis=0)))
+    assert read_pwm(str(meme), "MA0002.1").shape == (4, 3)
+
+
+def test_read_meme_needs_a_name_when_there_are_several(tmp_path):
+    meme = tmp_path / "motifs.meme"
+    meme.write_text(MEME)
+    with pytest.raises(ValueError, match="--motif"):
+        read_pwm(str(meme))
+    with pytest.raises(ValueError, match="not found"):
+        read_pwm(str(meme), "nope")
+
+
+def test_read_meme_single_motif_gzipped(tmp_path):
+    single = MEME.split("MOTIF MA0002.1")[0]
+    meme = tmp_path / "motif.meme.gz"
+    with gzip.open(meme, "wt") as f:
+        f.write(single)
+    assert read_pwm(str(meme)).shape == (4, 2)
+
+
+def test_motif_option_reaches_damo(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_damo(*args, **kwargs):
+        seen.update(kwargs)
+        return np.zeros((4, 2))
+
+    monkeypatch.setattr(cli, "damo", fake_damo)
+    fa = os.path.join(ROOT, "examples", "positive_seqs.fa.gz")
+    res = CliRunner().invoke(cli.main, [fa, fa, JASPAR, "-m", "MA0001.1", "-o", str(tmp_path / "o.txt")])
+    assert res.exit_code == 0, res.output
+    assert seen["motif_name"] == "MA0001.1"
 
 
 def test_update_stops_on_perfect_separation():

@@ -4,8 +4,8 @@ import sys
 
 import click
 
-from cudamo.damo import damo
-from cudamo.io import open_file, write_pwm
+from cudamo.damo import damo, pwm_to_pfm
+from cudamo.io import open_file, write_pfm, write_pwm
 
 CONTEXT_SETTINGS = {
     "help_option_names": ["-h", "--help"],
@@ -42,19 +42,42 @@ CONTEXT_SETTINGS = {
     help="Output file (.gz to compress). [default: stdout]",
     type=click.Path(resolve_path=True),
 )
+@click.option(
+    "-m", "--motif",
+    help="Motif to use when the MEME file has several (name, or its ID).",
+)
+@click.option(
+    "--pfm",
+    help="Also write a PFM (JASPAR format, frequencies) to this file.",
+    type=click.Path(resolve_path=True),
+)
+@click.option(
+    "--scale",
+    help="Factor applied to the PWM before converting it to a PFM; "
+         "above 1 sharpens the columns, below 1 flattens them.",
+    type=click.FloatRange(min=0, min_open=True),
+    default=1.0,
+    show_default=True,
+)
 def main(**args):
-    """Optimize a JASPAR motif to separate positive from negative sequences.
+    """Optimize a JASPAR or MEME motif to separate positive from negative sequences.
 
     The log PWM is written with one line per position and four columns
-    (A, C, G, T).
+    (A, C, G, T). With --pfm, a PFM is written too: the PWM weights are
+    read as energies (kT) and converted with a Boltzmann distribution, as
+    in DiMO.
     """
     pwm = damo(args["positive_seqs"], args["negative_seqs"],
         args["jaspar_profile"], args["debugging"],
-        iterations=args["iterations"])
+        iterations=args["iterations"], motif_name=args["motif"])
 
     if args["output_file"] is None:
         write_pwm(pwm, sys.stdout)
     else:
         with open_file(args["output_file"], "w") as handle:
             write_pwm(pwm, handle)
+
+    if args["pfm"] is not None:
+        with open_file(args["pfm"], "w") as handle:
+            write_pfm(pwm_to_pfm(pwm, args["scale"]), handle)
 
